@@ -1,0 +1,15 @@
+[package]
+name = "tension_field"
+version = "0.1.0"
+edition = "2024"
+publish = false
+build = "build.rs"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+toybox = { path = "../toybox" }
+
+[build-dependencies]
+toybox = { path = "../toybox" }
