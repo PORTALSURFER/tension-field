@@ -700,34 +700,36 @@ impl GuiState {
     }
 
     fn draw_tension_map(&mut self, ui: &mut Ui<'_>, rect: Rect) {
-        let canvas = ui.canvas();
-        canvas.fill_rect(rect, Color::rgb(22, 27, 35));
-        canvas.stroke_rect(rect, 1, PANEL_BORDER);
+        {
+            let canvas = ui.canvas();
+            canvas.fill_rect(rect, Color::rgb(22, 27, 35));
+            canvas.stroke_rect(rect, 1, PANEL_BORDER);
 
-        let center_x = rect.origin.x + rect.size.width as i32 / 2;
-        let center_y = rect.origin.y + rect.size.height as i32 / 2;
-        canvas.draw_line(
-            Point {
-                x: center_x,
-                y: rect.origin.y,
-            },
-            Point {
-                x: center_x,
-                y: rect.origin.y + rect.size.height as i32,
-            },
-            Color::rgb(52, 62, 77),
-        );
-        canvas.draw_line(
-            Point {
-                x: rect.origin.x,
-                y: center_y,
-            },
-            Point {
-                x: rect.origin.x + rect.size.width as i32,
-                y: center_y,
-            },
-            Color::rgb(52, 62, 77),
-        );
+            let center_x = rect.origin.x + rect.size.width as i32 / 2;
+            let center_y = rect.origin.y + rect.size.height as i32 / 2;
+            canvas.draw_line(
+                Point {
+                    x: center_x,
+                    y: rect.origin.y,
+                },
+                Point {
+                    x: center_x,
+                    y: rect.origin.y + rect.size.height as i32,
+                },
+                Color::rgb(52, 62, 77),
+            );
+            canvas.draw_line(
+                Point {
+                    x: rect.origin.x,
+                    y: center_y,
+                },
+                Point {
+                    x: rect.origin.x + rect.size.width as i32,
+                    y: center_y,
+                },
+                Color::rgb(52, 62, 77),
+            );
+        }
 
         let response = ui.region_with_key("tension-map", rect);
         let input = ui.input();
@@ -765,37 +767,40 @@ impl GuiState {
             self.map_trace.remove(0);
         }
 
-        for pair in self.map_trace.windows(2) {
-            if let [a, b] = pair {
-                canvas.draw_line(*a, *b, MAP_TRACE);
+        {
+            let canvas = ui.canvas();
+            for pair in self.map_trace.windows(2) {
+                if let [a, b] = pair {
+                    canvas.draw_line(*a, *b, MAP_TRACE);
+                }
             }
+
+            canvas.draw_line(
+                Point {
+                    x: px,
+                    y: rect.origin.y,
+                },
+                Point {
+                    x: px,
+                    y: rect.origin.y + rect.size.height as i32,
+                },
+                MAP_LINE,
+            );
+            canvas.draw_line(
+                Point {
+                    x: rect.origin.x,
+                    y: py,
+                },
+                Point {
+                    x: rect.origin.x + rect.size.width as i32,
+                    y: py,
+                },
+                MAP_LINE,
+            );
+
+            canvas.fill_circle(point, 8, MAP_DOT);
+            canvas.stroke_circle(point, 12, 2, ACCENT);
         }
-
-        canvas.draw_line(
-            Point {
-                x: px,
-                y: rect.origin.y,
-            },
-            Point {
-                x: px,
-                y: rect.origin.y + rect.size.height as i32,
-            },
-            MAP_LINE,
-        );
-        canvas.draw_line(
-            Point {
-                x: rect.origin.x,
-                y: py,
-            },
-            Point {
-                x: rect.origin.x + rect.size.width as i32,
-                y: py,
-            },
-            MAP_LINE,
-        );
-
-        canvas.fill_circle(point, 8, MAP_DOT);
-        canvas.stroke_circle(point, 12, 2, ACCENT);
 
         ui.text_with_color(
             Point {
@@ -843,9 +848,11 @@ impl GuiState {
     }
 
     fn draw_mod_bank(&mut self, ui: &mut Ui<'_>, rect: Rect) {
-        let canvas = ui.canvas();
-        canvas.fill_rect(rect, Color::rgb(21, 26, 34));
-        canvas.stroke_rect(rect, 1, PANEL_BORDER);
+        {
+            let canvas = ui.canvas();
+            canvas.fill_rect(rect, Color::rgb(21, 26, 34));
+            canvas.stroke_rect(rect, 1, PANEL_BORDER);
+        }
         ui.text_with_color(
             Point {
                 x: rect.origin.x + 8,
@@ -858,7 +865,7 @@ impl GuiState {
         let mut row_y = rect.origin.y + 24;
         let col_x = [rect.origin.x + 8, rect.origin.x + 82, rect.origin.x + 156];
 
-        self.draw_local_toggle(
+        Self::draw_local_toggle(
             ui,
             "mod-run",
             "Run",
@@ -869,7 +876,7 @@ impl GuiState {
             },
         );
 
-        self.draw_mod_row(
+        Self::draw_mod_row(
             ui,
             "LFO A",
             &mut self.mod_bank.lfo_a_rate,
@@ -879,7 +886,7 @@ impl GuiState {
             col_x,
         );
         row_y += 44;
-        self.draw_mod_row(
+        Self::draw_mod_row(
             ui,
             "LFO B",
             &mut self.mod_bank.lfo_b_rate,
@@ -889,7 +896,7 @@ impl GuiState {
             col_x,
         );
         row_y += 44;
-        self.draw_mod_row(
+        Self::draw_mod_row(
             ui,
             "Random",
             &mut self.mod_bank.walk_rate,
@@ -899,7 +906,7 @@ impl GuiState {
             col_x,
         );
         row_y += 44;
-        self.draw_mod_row(
+        Self::draw_mod_row(
             ui,
             "Env",
             &mut self.mod_bank.env_sensitivity,
@@ -937,7 +944,7 @@ impl GuiState {
             );
             for dst in 0..4 {
                 let key = format!("route-{src}-{dst}");
-                self.draw_local_toggle(
+                Self::draw_local_toggle(
                     ui,
                     &key,
                     "",
@@ -952,7 +959,6 @@ impl GuiState {
     }
 
     fn draw_mod_row(
-        &mut self,
         ui: &mut Ui<'_>,
         label: &str,
         rate: &mut f32,
@@ -962,7 +968,7 @@ impl GuiState {
         cols: [i32; 3],
     ) {
         ui.text_with_color(Point { x: cols[0], y }, label, TITLE);
-        self.draw_local_knob(
+        Self::draw_local_knob(
             ui,
             &format!("{label}-rate"),
             "R",
@@ -973,7 +979,7 @@ impl GuiState {
                 y: y - 10,
             },
         );
-        self.draw_local_knob(
+        Self::draw_local_knob(
             ui,
             &format!("{label}-depth"),
             "D",
@@ -985,7 +991,7 @@ impl GuiState {
             },
         );
         if let Some(drift) = drift {
-            self.draw_local_knob(
+            Self::draw_local_knob(
                 ui,
                 &format!("{label}-drift"),
                 "Dr",
@@ -1000,7 +1006,6 @@ impl GuiState {
     }
 
     fn draw_local_knob(
-        &mut self,
         ui: &mut Ui<'_>,
         key: &str,
         label: &str,
@@ -1016,7 +1021,6 @@ impl GuiState {
     }
 
     fn draw_local_toggle(
-        &mut self,
         ui: &mut Ui<'_>,
         key: &str,
         label: &str,
