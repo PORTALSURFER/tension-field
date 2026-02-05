@@ -9,10 +9,10 @@ build = "build.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-toybox = { path = "../toybox" }
+toybox = { git = "https://github.com/PORTALSURFER/toybox" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-toybox = { path = "../toybox", features = ["gui"] }
+toybox = { git = "https://github.com/PORTALSURFER/toybox", features = ["gui"] }
 
 [build-dependencies]
-toybox = { path = "../toybox" }
+toybox = { git = "https://github.com/PORTALSURFER/toybox" }
