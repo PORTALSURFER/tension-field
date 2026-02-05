@@ -331,6 +331,25 @@ pub(crate) fn param_count() -> u32 {
     PARAM_DEFS.len() as u32
 }
 
+/// Number of serialized parameter values stored in plugin state.
+pub(crate) const STATE_VALUE_COUNT: usize = PARAM_DEFS.len();
+
+/// Build a stable, ordered parameter snapshot for CLAP state serialization.
+pub(crate) fn state_values(params: &TensionFieldParams) -> [f32; STATE_VALUE_COUNT] {
+    let mut values = [0.0; STATE_VALUE_COUNT];
+    for (index, def) in PARAM_DEFS.iter().enumerate() {
+        values[index] = params.get_param(def.id).unwrap_or(def.default_value as f32);
+    }
+    values
+}
+
+/// Apply a serialized parameter snapshot to the live parameter store.
+pub(crate) fn apply_state_values(params: &TensionFieldParams, values: [f32; STATE_VALUE_COUNT]) {
+    for (index, def) in PARAM_DEFS.iter().enumerate() {
+        params.set_param(def.id, values[index]);
+    }
+}
+
 /// Write parameter metadata for one parameter index.
 pub(crate) fn write_param_info(param_index: u32, writer: &mut ParamInfoWriter) {
     let Some(def) = PARAM_DEFS.get(param_index as usize) else {

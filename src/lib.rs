@@ -16,7 +16,9 @@ use toybox::clack_extensions::gui::{
     GuiApiType, GuiConfiguration, GuiSize, PluginGui, PluginGuiImpl, Window,
 };
 use toybox::clack_extensions::params::*;
+use toybox::clack_extensions::state::{PluginState, PluginStateImpl};
 use toybox::clack_plugin::prelude::*;
+use toybox::clack_plugin::stream::{InputStream, OutputStream};
 use toybox::clap::automation::{AutomationDrainBuffer, AutomationQueue};
 use toybox::clap::params::apply_param_events;
 
@@ -24,11 +26,16 @@ mod dsp;
 #[cfg(target_os = "windows")]
 mod gui;
 mod params;
+mod state;
 
 use dsp::{RenderReport, TensionFieldEngine};
 #[cfg(target_os = "windows")]
 use gui::TensionFieldGui;
-use params::{TensionFieldParams, param_count, text_to_value, value_to_text, write_param_info};
+use params::{
+    TensionFieldParams, apply_state_values, param_count, state_values, text_to_value,
+    value_to_text, write_param_info,
+};
+use state::{PluginStateSnapshot, read_snapshot, write_snapshot};
 
 /// CLAP plugin type for Tension Field.
 pub struct TensionFieldPlugin;
@@ -44,7 +51,8 @@ impl Plugin for TensionFieldPlugin {
     ) {
         builder
             .register::<PluginAudioPorts>()
-            .register::<PluginParams>();
+            .register::<PluginParams>()
+            .register::<PluginState>();
         #[cfg(target_os = "windows")]
         {
             builder.register::<PluginGui>();
@@ -175,6 +183,41 @@ impl GuiStatus {
     pub(crate) fn tension_activity(&self) -> f32 {
         bits_to_f32(self.tension_activity.load(Ordering::Relaxed))
     }
+
+    fn snapshot(&self) -> [f32; state::METER_COUNT] {
+        [
+            bits_to_f32(self.input_left.load(Ordering::Relaxed)),
+            bits_to_f32(self.input_right.load(Ordering::Relaxed)),
+            bits_to_f32(self.elastic_activity.load(Ordering::Relaxed)),
+            bits_to_f32(self.warp_activity.load(Ordering::Relaxed)),
+            bits_to_f32(self.space_activity.load(Ordering::Relaxed)),
+            bits_to_f32(self.feedback_activity.load(Ordering::Relaxed)),
+            bits_to_f32(self.output_left.load(Ordering::Relaxed)),
+            bits_to_f32(self.output_right.load(Ordering::Relaxed)),
+            bits_to_f32(self.tension_activity.load(Ordering::Relaxed)),
+        ]
+    }
+
+    fn apply_snapshot(&self, snapshot: [f32; state::METER_COUNT]) {
+        self.input_left
+            .store(f32_to_bits(snapshot[0]), Ordering::Relaxed);
+        self.input_right
+            .store(f32_to_bits(snapshot[1]), Ordering::Relaxed);
+        self.elastic_activity
+            .store(f32_to_bits(snapshot[2]), Ordering::Relaxed);
+        self.warp_activity
+            .store(f32_to_bits(snapshot[3]), Ordering::Relaxed);
+        self.space_activity
+            .store(f32_to_bits(snapshot[4]), Ordering::Relaxed);
+        self.feedback_activity
+            .store(f32_to_bits(snapshot[5]), Ordering::Relaxed);
+        self.output_left
+            .store(f32_to_bits(snapshot[6]), Ordering::Relaxed);
+        self.output_right
+            .store(f32_to_bits(snapshot[7]), Ordering::Relaxed);
+        self.tension_activity
+            .store(f32_to_bits(snapshot[8]), Ordering::Relaxed);
+    }
 }
 
 /// Shared state between threads.
@@ -288,6 +331,25 @@ impl PluginMainThreadParams for TensionFieldMainThread<'_> {
         let _ = self
             .automation_drain
             .drain(&self.shared.automation_queue, output_parameter_changes);
+    }
+}
+
+impl PluginStateImpl for TensionFieldMainThread<'_> {
+    fn save(&mut self, output: &mut OutputStream) -> Result<(), PluginError> {
+        let snapshot = PluginStateSnapshot {
+            param_values: state_values(&self.shared.params),
+            meter_values: self.shared.status.snapshot(),
+        };
+        write_snapshot(output, &snapshot)?;
+        Ok(())
+    }
+
+    fn load(&mut self, input: &mut InputStream) -> Result<(), PluginError> {
+        let snapshot =
+            read_snapshot(input).map_err(|error| PluginError::Message(error.as_message()))?;
+        apply_state_values(&self.shared.params, snapshot.param_values);
+        self.shared.status.apply_snapshot(snapshot.meter_values);
+        Ok(())
     }
 }
 
@@ -545,7 +607,6 @@ fn f32_to_bits(value: f32) -> u32 {
     u32::from_ne_bytes(value.to_ne_bytes())
 }
 
-#[cfg(target_os = "windows")]
 fn bits_to_f32(value: u32) -> f32 {
     f32::from_ne_bytes(value.to_ne_bytes())
 }
