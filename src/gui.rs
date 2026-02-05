@@ -9,8 +9,8 @@ use toybox::clack_plugin::utils::ClapId;
 use toybox::clap::automation::{AutomationConfig, AutomationQueue};
 use toybox::clap::gui::GuiHostWindow;
 use toybox::gui::declarative::{
-    Align, ButtonEvent, ButtonSpec, DropdownEvent, DropdownSpec, FlexSpec, GridSpec, KnobEvent,
-    KnobSpec, LabelSpec, Node, Padding, PanelSpec, RegionSpec, RootFrameSpec, SizeSpec,
+    Align, ButtonEvent, ButtonSpec, DeclarativeGridSpec, DropdownEvent, DropdownSpec, FlexSpec,
+    KnobEvent, KnobSpec, LabelSpec, Node, Padding, PanelSpec, RegionSpec, RootFrameSpec, SizeSpec,
     ToggleEvent, ToggleSpec, UiSpec, WidgetSpec, measure,
 };
 use toybox::gui::{Color, Point, Rect, Size, Theme};
@@ -761,7 +761,7 @@ impl GuiState {
             }
         }
 
-        Node::Grid(GridSpec {
+        Node::Grid(DeclarativeGridSpec {
             size: SizeSpec::Auto,
             columns: 5,
             cell_size: Size {
@@ -775,34 +775,36 @@ impl GuiState {
     }
 
     fn draw_tension_map(&mut self, ui: &mut Ui<'_>, rect: Rect) {
-        let canvas = ui.canvas();
-        canvas.fill_rect(rect, Color::rgb(22, 27, 35));
-        canvas.stroke_rect(rect, 1, PANEL_BORDER);
+        {
+            let canvas = ui.canvas();
+            canvas.fill_rect(rect, Color::rgb(22, 27, 35));
+            canvas.stroke_rect(rect, 1, PANEL_BORDER);
 
-        let center_x = rect.origin.x + rect.size.width as i32 / 2;
-        let center_y = rect.origin.y + rect.size.height as i32 / 2;
-        canvas.draw_line(
-            Point {
-                x: center_x,
-                y: rect.origin.y,
-            },
-            Point {
-                x: center_x,
-                y: rect.origin.y + rect.size.height as i32,
-            },
-            Color::rgb(52, 62, 77),
-        );
-        canvas.draw_line(
-            Point {
-                x: rect.origin.x,
-                y: center_y,
-            },
-            Point {
-                x: rect.origin.x + rect.size.width as i32,
-                y: center_y,
-            },
-            Color::rgb(52, 62, 77),
-        );
+            let center_x = rect.origin.x + rect.size.width as i32 / 2;
+            let center_y = rect.origin.y + rect.size.height as i32 / 2;
+            canvas.draw_line(
+                Point {
+                    x: center_x,
+                    y: rect.origin.y,
+                },
+                Point {
+                    x: center_x,
+                    y: rect.origin.y + rect.size.height as i32,
+                },
+                Color::rgb(52, 62, 77),
+            );
+            canvas.draw_line(
+                Point {
+                    x: rect.origin.x,
+                    y: center_y,
+                },
+                Point {
+                    x: rect.origin.x + rect.size.width as i32,
+                    y: center_y,
+                },
+                Color::rgb(52, 62, 77),
+            );
+        }
 
         let response = ui.region_with_key("tension-map-region", rect);
         let pointer = ui.input().pointer_pos;
@@ -840,74 +842,77 @@ impl GuiState {
             self.map_trace.remove(0);
         }
 
-        for pair in self.map_trace.windows(2) {
-            if let [a, b] = pair {
-                canvas.draw_line(*a, *b, MAP_TRACE);
+        {
+            let canvas = ui.canvas();
+            for pair in self.map_trace.windows(2) {
+                if let [a, b] = pair {
+                    canvas.draw_line(*a, *b, MAP_TRACE);
+                }
             }
+
+            canvas.draw_line(
+                Point {
+                    x: px,
+                    y: rect.origin.y,
+                },
+                Point {
+                    x: px,
+                    y: rect.origin.y + rect.size.height as i32,
+                },
+                MAP_LINE,
+            );
+            canvas.draw_line(
+                Point {
+                    x: rect.origin.x,
+                    y: py,
+                },
+                Point {
+                    x: rect.origin.x + rect.size.width as i32,
+                    y: py,
+                },
+                MAP_LINE,
+            );
+
+            canvas.fill_circle(point, 8, MAP_DOT);
+            canvas.stroke_circle(point, 12, 2, ACCENT);
+
+            canvas.draw_text(
+                Point {
+                    x: rect.origin.x + 8,
+                    y: rect.origin.y - 14,
+                },
+                "BACKWARD",
+                SUBTITLE,
+                1,
+            );
+            canvas.draw_text(
+                Point {
+                    x: rect.origin.x + rect.size.width as i32 - 58,
+                    y: rect.origin.y - 14,
+                },
+                "FORWARD",
+                SUBTITLE,
+                1,
+            );
+            canvas.draw_text(
+                Point {
+                    x: rect.origin.x + 2,
+                    y: rect.origin.y + rect.size.height as i32 + 6,
+                },
+                "VISCOUS",
+                SUBTITLE,
+                1,
+            );
+            canvas.draw_text(
+                Point {
+                    x: rect.origin.x + rect.size.width as i32 - 40,
+                    y: rect.origin.y + rect.size.height as i32 + 6,
+                },
+                "SPRING",
+                SUBTITLE,
+                1,
+            );
         }
-
-        canvas.draw_line(
-            Point {
-                x: px,
-                y: rect.origin.y,
-            },
-            Point {
-                x: px,
-                y: rect.origin.y + rect.size.height as i32,
-            },
-            MAP_LINE,
-        );
-        canvas.draw_line(
-            Point {
-                x: rect.origin.x,
-                y: py,
-            },
-            Point {
-                x: rect.origin.x + rect.size.width as i32,
-                y: py,
-            },
-            MAP_LINE,
-        );
-
-        canvas.fill_circle(point, 8, MAP_DOT);
-        canvas.stroke_circle(point, 12, 2, ACCENT);
-
-        canvas.draw_text(
-            Point {
-                x: rect.origin.x + 8,
-                y: rect.origin.y - 14,
-            },
-            "BACKWARD",
-            SUBTITLE,
-            1,
-        );
-        canvas.draw_text(
-            Point {
-                x: rect.origin.x + rect.size.width as i32 - 58,
-                y: rect.origin.y - 14,
-            },
-            "FORWARD",
-            SUBTITLE,
-            1,
-        );
-        canvas.draw_text(
-            Point {
-                x: rect.origin.x + 2,
-                y: rect.origin.y + rect.size.height as i32 + 6,
-            },
-            "VISCOUS",
-            SUBTITLE,
-            1,
-        );
-        canvas.draw_text(
-            Point {
-                x: rect.origin.x + rect.size.width as i32 - 40,
-                y: rect.origin.y + rect.size.height as i32 + 6,
-            },
-            "SPRING",
-            SUBTITLE,
-            1,
-        );
     }
 
     fn draw_meter_cell(&mut self, ui: &mut Ui<'_>, rect: Rect, index: usize, label: &str) {
