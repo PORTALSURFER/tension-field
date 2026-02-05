@@ -1,4 +1,4 @@
-//! Industrial performance UI for the Tension Field plugin.
+//! Layout-driven performance UI for the Tension Field plugin.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -8,8 +8,13 @@ use toybox::clack_plugin::plugin::PluginError;
 use toybox::clack_plugin::utils::ClapId;
 use toybox::clap::automation::{AutomationConfig, AutomationQueue};
 use toybox::clap::gui::GuiHostWindow;
-use toybox::gui::{Color, Point, Rect, Size};
-use toybox::patchbay_gui::{Ui, WidgetId};
+use toybox::gui::declarative::{
+    Align, ButtonEvent, ButtonSpec, DropdownEvent, DropdownSpec, FlexSpec, GridSpec, KnobEvent,
+    KnobSpec, LabelSpec, Node, Padding, PanelSpec, RegionSpec, RootFrameSpec, SizeSpec,
+    ToggleEvent, ToggleSpec, UiSpec, WidgetSpec, measure,
+};
+use toybox::gui::{Color, Point, Rect, Size, Theme};
+use toybox::patchbay_gui::Ui;
 use toybox::raw_window_handle::HasRawWindowHandle;
 
 use crate::params::{
@@ -21,31 +26,20 @@ use crate::params::{
 };
 use crate::{GuiStatus, HostParamRequester};
 
-/// Default width of the Tension Field editor.
-pub const WINDOW_WIDTH: u32 = 1280;
-/// Default height of the Tension Field editor.
-pub const WINDOW_HEIGHT: u32 = 860;
-
-const PADDING: i32 = 18;
-const TOP_Y: i32 = 66;
-const PANEL_HEIGHT: i32 = 640;
-const LEFT_W: i32 = 300;
-const CENTER_W: i32 = 600;
-const RIGHT_W: i32 = 300;
-const GAP: i32 = 20;
-const PANEL_TITLE_Y: i32 = 10;
-const PANEL_CONTENT_Y: i32 = 40;
-const KNOB_W: i32 = 78;
-const KNOB_GAP_X: i32 = 20;
-const KNOB_GAP_Y: i32 = 26;
-const BUTTON_H: i32 = 26;
-const CARD_H: i32 = 58;
-const CARD_GAP: i32 = 10;
-const DROPDOWN_H: i32 = 22;
-const TOGGLE_H: i32 = 18;
-const TOGGLE_W: i32 = 48;
-const MAP_SIZE: i32 = 460;
-const METER_H: i32 = 120;
+const ROOT_PADDING_X: i32 = 14;
+const ROOT_PADDING_Y: i32 = 12;
+const PANEL_GAP: i32 = 12;
+const CONTROL_GAP: i32 = 8;
+const BUTTON_WIDTH: u32 = 120;
+const BUTTON_HEIGHT: u32 = 24;
+const TOGGLE_W: u32 = 58;
+const TOGGLE_H: u32 = 18;
+const DROPDOWN_W: u32 = 160;
+const DROPDOWN_H: u32 = 22;
+const MAP_WIDTH: u32 = 560;
+const MAP_HEIGHT: u32 = 430;
+const METER_CELL_W: u32 = 72;
+const METER_CELL_H: u32 = 96;
 
 const BG: Color = Color::rgb(17, 21, 28);
 const PANEL_BG: Color = Color::rgb(26, 31, 40);
@@ -56,8 +50,6 @@ const ACCENT: Color = Color::rgb(235, 192, 120);
 const MAP_LINE: Color = Color::rgb(98, 182, 255);
 const MAP_TRACE: Color = Color::rgba(132, 201, 255, 120);
 const MAP_DOT: Color = Color::rgb(247, 217, 143);
-const CARD_ACTIVE: Color = Color::rgb(57, 66, 82);
-const CARD_IDLE: Color = Color::rgb(33, 39, 50);
 const METER_FILL: Color = Color::rgb(99, 210, 188);
 const METER_WARN: Color = Color::rgb(228, 148, 112);
 
@@ -74,6 +66,11 @@ impl TensionFieldGui {
         self.window.set_parent(window.raw_window_handle());
     }
 
+    /// Return the last known logical window size.
+    pub fn last_size(&self) -> Option<(u32, u32)> {
+        self.window.last_size()
+    }
+
     /// Open the plugin editor with shared parameter and metering state.
     pub fn open(
         &mut self,
@@ -86,21 +83,28 @@ impl TensionFieldGui {
             return Ok(());
         }
 
-        let state = GuiState::new(
+        let mut state = GuiState::new(
             Arc::clone(params),
             automation_queue,
             status,
             param_requester,
         );
+        let (width, height) = state.measure_window_size();
+
         self.window.open_parented(
             "Tension Field".to_string(),
-            (WINDOW_WIDTH, WINDOW_HEIGHT),
+            (width, height),
             state,
             |_state| {},
             |_input, state: &mut GuiState| state.build_spec(),
         )?;
         self.is_open = true;
         Ok(())
+    }
+
+    /// Request a resize on the GUI thread.
+    pub fn request_resize(&self, width: u32, height: u32) {
+        self.window.request_resize(width, height);
     }
 
     /// Close the editor if it is currently open.
@@ -110,13 +114,26 @@ impl TensionFieldGui {
     }
 }
 
+/// Measure the preferred editor size from the declarative layout.
+pub fn preferred_window_size(
+    params: &Arc<TensionFieldParams>,
+    status: &Arc<GuiStatus>,
+) -> (u32, u32) {
+    let mut state = GuiState::new(
+        Arc::clone(params),
+        Arc::new(AutomationQueue::default()),
+        Arc::clone(status),
+        None,
+    );
+    state.measure_window_size()
+}
+
 struct GuiState {
     params: Arc<TensionFieldParams>,
     automation_queue: Arc<AutomationQueue>,
     automation_config: AutomationConfig,
     status: Arc<GuiStatus>,
     param_requester: Option<HostParamRequester>,
-    active_continuous: Option<(WidgetId, ClapId)>,
     map_dragging: bool,
     map_trace: Vec<Point>,
     active_mode: ModeCard,
@@ -138,7 +155,6 @@ impl GuiState {
             automation_config: AutomationConfig::default(),
             status,
             param_requester,
-            active_continuous: None,
             map_dragging: false,
             map_trace: Vec::with_capacity(48),
             active_mode: ModeCard::TapeTugPad,
@@ -148,599 +164,656 @@ impl GuiState {
         }
     }
 
-    fn request_flush(&self) {
-        if let Some(requester) = self.param_requester {
-            requester.request_flush();
-        }
+    fn measure_window_size(&mut self) -> (u32, u32) {
+        let spec = self.build_spec();
+        let measured = measure(&spec, &Theme::default());
+        (measured.width.max(1), measured.height.max(1))
     }
 
-    fn push_value(&self, param_id: ClapId, value: f32) {
-        self.automation_queue
-            .push_value(&self.automation_config, param_id, value as f64);
-        self.request_flush();
-    }
+    fn build_spec(&mut self) -> UiSpec<'static, GuiState> {
+        let header = Node::Widget(WidgetSpec {
+            key: "tension-field-header".to_string(),
+            size: SizeSpec::Fixed(Size {
+                width: 420,
+                height: 24,
+            }),
+            render: Box::new(|ui, rect, _state: &mut GuiState| {
+                ui.canvas().fill_rect(rect, BG);
+                ui.text_with_color(rect.origin, "TENSION FIELD", TITLE);
+                ui.text_with_color(
+                    Point {
+                        x: rect.origin.x + 190,
+                        y: rect.origin.y,
+                    },
+                    "elastic time warp",
+                    SUBTITLE,
+                );
+            }),
+        });
 
-    fn push_begin(&self, param_id: ClapId) {
-        self.automation_queue
-            .push_gesture_begin(&self.automation_config, param_id);
-        self.request_flush();
-    }
+        let main_row = Node::Row(FlexSpec {
+            size: SizeSpec::Auto,
+            gap: PANEL_GAP,
+            padding: Padding::default(),
+            align: Align::Start,
+            children: vec![
+                self.build_gesture_panel(),
+                self.build_map_panel(),
+                self.build_space_mod_panel(),
+            ],
+        });
 
-    fn push_end(&self, param_id: ClapId) {
-        self.automation_queue
-            .push_gesture_end(&self.automation_config, param_id);
-        self.request_flush();
-    }
+        let meter_panel = self.build_meter_panel();
 
-    fn set_param_immediate(&self, param_id: ClapId, value: f32) {
-        self.params.set_param(param_id, value);
-        self.push_value(param_id, value);
-    }
-
-    fn set_param_toggle(&self, param_id: ClapId, enabled: bool) {
-        self.params
-            .set_param(param_id, if enabled { 1.0 } else { 0.0 });
-        self.push_begin(param_id);
-        self.push_value(param_id, if enabled { 1.0 } else { 0.0 });
-        self.push_end(param_id);
-    }
-
-    fn begin_if_needed(&mut self, id: WidgetId, param_id: ClapId, active: bool) {
-        match (self.active_continuous, active) {
-            (None, true) => {
-                self.active_continuous = Some((id, param_id));
-                self.push_begin(param_id);
-            }
-            (Some((current, current_param)), true) if current != id => {
-                self.push_end(current_param);
-                self.active_continuous = Some((id, param_id));
-                self.push_begin(param_id);
-            }
-            (Some((current, current_param)), false) if current == id => {
-                self.push_end(current_param);
-                self.active_continuous = None;
-            }
-            _ => {}
-        }
-    }
-
-    fn build_spec(&mut self) -> toybox::gui::declarative::UiSpec<'static, GuiState> {
-        use toybox::gui::Theme;
-        use toybox::gui::declarative::{
-            Node, PanelSpec, RootFrameSpec, SizeSpec, UiSpec, WidgetSpec,
-        };
-
-        let theme = Theme::default();
         UiSpec {
             root: RootFrameSpec {
                 key: "tension-field-root".to_string(),
                 title: None,
                 padding: 0,
                 content: Box::new(Node::Panel(PanelSpec {
-                    key: "tension-field-panel".to_string(),
+                    key: "tension-field-main".to_string(),
                     title: None,
                     padding: 0,
-                    background: Some(theme.background),
-                    outline: Some(theme.background),
+                    background: Some(BG),
+                    outline: Some(BG),
                     header_height: Some(0),
-                    size: SizeSpec::Fixed(Size {
-                        width: WINDOW_WIDTH,
-                        height: WINDOW_HEIGHT,
-                    }),
-                    content: Box::new(Node::Widget(WidgetSpec {
-                        key: "tension-field-widget".to_string(),
-                        size: SizeSpec::Fixed(Size {
-                            width: WINDOW_WIDTH,
-                            height: WINDOW_HEIGHT,
-                        }),
-                        render: Box::new(|ui, _rect, state: &mut GuiState| {
-                            state.draw_content(ui);
-                        }),
+                    size: SizeSpec::Auto,
+                    content: Box::new(Node::Column(FlexSpec {
+                        size: SizeSpec::Auto,
+                        gap: PANEL_GAP,
+                        padding: Padding::symmetric(ROOT_PADDING_X, ROOT_PADDING_Y),
+                        align: Align::Start,
+                        children: vec![header, main_row, meter_panel],
                     })),
                 })),
             },
         }
     }
 
-    fn draw_content(&mut self, ui: &mut Ui<'_>) {
-        ui.canvas().clear(BG);
+    fn build_gesture_panel(&self) -> Node<'static, GuiState> {
+        Node::Panel(PanelSpec {
+            key: "gesture-panel".to_string(),
+            title: Some("Gesture".to_string()),
+            padding: 10,
+            background: Some(PANEL_BG),
+            outline: Some(PANEL_BORDER),
+            header_height: None,
+            size: SizeSpec::Auto,
+            content: Box::new(Node::Column(FlexSpec {
+                size: SizeSpec::Auto,
+                gap: CONTROL_GAP,
+                padding: Padding::default(),
+                align: Align::Start,
+                children: vec![
+                    Node::Row(FlexSpec {
+                        size: SizeSpec::Auto,
+                        gap: CONTROL_GAP,
+                        padding: Padding::default(),
+                        align: Align::Start,
+                        children: vec![
+                            self.param_knob(
+                                "tension",
+                                "Tension",
+                                PARAM_TENSION_ID,
+                                self.params.tension(),
+                                (0.0, 1.0),
+                                "%",
+                            ),
+                            self.pull_button(),
+                        ],
+                    }),
+                    Node::Row(FlexSpec {
+                        size: SizeSpec::Auto,
+                        gap: CONTROL_GAP,
+                        padding: Padding::default(),
+                        align: Align::Start,
+                        children: vec![
+                            self.param_toggle("hold", "Hold", PARAM_HOLD_ID, self.params.hold()),
+                            self.pull_shape_dropdown(),
+                        ],
+                    }),
+                    Node::Row(FlexSpec {
+                        size: SizeSpec::Auto,
+                        gap: CONTROL_GAP,
+                        padding: Padding::default(),
+                        align: Align::Start,
+                        children: vec![
+                            self.param_knob(
+                                "pull-rate",
+                                "Pull Rate",
+                                PARAM_PULL_RATE_ID,
+                                self.params.pull_rate_hz(),
+                                (0.02, 2.0),
+                                "Hz",
+                            ),
+                            self.param_knob(
+                                "rebound",
+                                "Rebound",
+                                PARAM_REBOUND_ID,
+                                self.params.rebound(),
+                                (0.0, 1.0),
+                                "%",
+                            ),
+                        ],
+                    }),
+                    Node::Label(LabelSpec {
+                        text: "Modes".to_string(),
+                        size: SizeSpec::Auto,
+                        color: Some(SUBTITLE),
+                    }),
+                    self.mode_button(ModeCard::TapeTugPad),
+                    self.mode_button(ModeCard::ElasticDroneMaker),
+                    self.mode_button(ModeCard::RatchetAtmos),
+                    self.mode_button(ModeCard::GhostPercTail),
+                ],
+            })),
+        })
+    }
 
-        let now = Instant::now();
-        let dt = (now - self.last_frame).as_secs_f32().clamp(0.0, 0.1);
-        self.last_frame = now;
+    fn build_map_panel(&self) -> Node<'static, GuiState> {
+        Node::Panel(PanelSpec {
+            key: "map-panel".to_string(),
+            title: Some("Tension Map".to_string()),
+            padding: 10,
+            background: Some(PANEL_BG),
+            outline: Some(PANEL_BORDER),
+            header_height: None,
+            size: SizeSpec::Auto,
+            content: Box::new(Node::Column(FlexSpec {
+                size: SizeSpec::Auto,
+                gap: CONTROL_GAP,
+                padding: Padding::default(),
+                align: Align::Start,
+                children: vec![
+                    Node::Widget(WidgetSpec {
+                        key: "tension-map-widget".to_string(),
+                        size: SizeSpec::Fixed(Size {
+                            width: MAP_WIDTH,
+                            height: MAP_HEIGHT,
+                        }),
+                        render: Box::new(|ui, rect, state: &mut GuiState| {
+                            state.draw_tension_map(ui, rect);
+                        }),
+                    }),
+                    Node::Row(FlexSpec {
+                        size: SizeSpec::Auto,
+                        gap: CONTROL_GAP,
+                        padding: Padding::default(),
+                        align: Align::Start,
+                        children: vec![
+                            self.param_knob(
+                                "grain",
+                                "Grain",
+                                PARAM_GRAIN_CONTINUITY_ID,
+                                self.params.grain_continuity(),
+                                (0.0, 1.0),
+                                "%",
+                            ),
+                            self.param_knob(
+                                "pitch-coupling",
+                                "Pitch Coupling",
+                                PARAM_PITCH_COUPLING_ID,
+                                self.params.pitch_coupling(),
+                                (0.0, 1.0),
+                                "%",
+                            ),
+                            self.param_knob(
+                                "feedback",
+                                "Feedback",
+                                PARAM_FEEDBACK_ID,
+                                self.params.feedback(),
+                                (0.0, 0.6),
+                                "%",
+                            ),
+                        ],
+                    }),
+                ],
+            })),
+        })
+    }
 
-        ui.text_with_color(Point { x: PADDING, y: 18 }, "TENSION FIELD", TITLE);
-        ui.text_with_color(
-            Point {
-                x: PADDING + 190,
-                y: 18,
-            },
-            "elastic time warp",
-            SUBTITLE,
-        );
-
-        let left_panel = Rect {
-            origin: Point {
-                x: PADDING,
-                y: TOP_Y,
-            },
-            size: Size {
-                width: LEFT_W as u32,
-                height: PANEL_HEIGHT as u32,
-            },
-        };
-        let center_panel = Rect {
-            origin: Point {
-                x: PADDING + LEFT_W + GAP,
-                y: TOP_Y,
-            },
-            size: Size {
-                width: CENTER_W as u32,
-                height: PANEL_HEIGHT as u32,
-            },
-        };
-        let right_panel = Rect {
-            origin: Point {
-                x: PADDING + LEFT_W + GAP + CENTER_W + GAP,
-                y: TOP_Y,
-            },
-            size: Size {
-                width: RIGHT_W as u32,
-                height: PANEL_HEIGHT as u32,
-            },
-        };
-        let meter_panel = Rect {
-            origin: Point {
-                x: PADDING,
-                y: TOP_Y + PANEL_HEIGHT + GAP,
-            },
-            size: Size {
-                width: (WINDOW_WIDTH as i32 - PADDING * 2) as u32,
-                height: METER_H as u32,
-            },
-        };
-
-        draw_panel(ui, left_panel, "Gesture");
-        draw_panel(ui, center_panel, "Tension Map");
-        draw_panel(ui, right_panel, "Space / Mod");
-        draw_panel(ui, meter_panel, "Stage Meters");
-
-        self.draw_left_panel(ui, left_panel);
-        self.draw_center_panel(ui, center_panel);
-        self.draw_right_panel(ui, right_panel);
-
-        self.apply_modulation(dt);
-        self.draw_meters(ui, meter_panel);
-
-        ui.track_rect(Rect {
-            origin: Point { x: 0, y: 0 },
-            size: Size {
-                width: WINDOW_WIDTH,
-                height: WINDOW_HEIGHT,
-            },
+    fn build_space_mod_panel(&self) -> Node<'static, GuiState> {
+        let mod_panel = Node::Panel(PanelSpec {
+            key: "mod-panel".to_string(),
+            title: Some("Slow Mod Bank".to_string()),
+            padding: 8,
+            background: Some(Color::rgb(21, 26, 34)),
+            outline: Some(PANEL_BORDER),
+            header_height: None,
+            size: SizeSpec::Auto,
+            content: Box::new(Node::Column(FlexSpec {
+                size: SizeSpec::Auto,
+                gap: CONTROL_GAP,
+                padding: Padding::default(),
+                align: Align::Start,
+                children: vec![
+                    self.mod_run_toggle(),
+                    self.mod_row(
+                        "A",
+                        ModParam::LfoARate,
+                        ModParam::LfoADepth,
+                        Some(ModParam::LfoADrift),
+                    ),
+                    self.mod_row(
+                        "B",
+                        ModParam::LfoBRate,
+                        ModParam::LfoBDepth,
+                        Some(ModParam::LfoBDrift),
+                    ),
+                    self.mod_row("R", ModParam::WalkRate, ModParam::WalkDepth, None),
+                    self.mod_row("E", ModParam::EnvSensitivity, ModParam::EnvDepth, None),
+                    Node::Label(LabelSpec {
+                        text: "Routes: Ten Dir Grn Wid".to_string(),
+                        size: SizeSpec::Auto,
+                        color: Some(SUBTITLE),
+                    }),
+                    self.mod_routes_grid(),
+                ],
+            })),
         });
+
+        Node::Panel(PanelSpec {
+            key: "space-panel".to_string(),
+            title: Some("Space / Mod".to_string()),
+            padding: 10,
+            background: Some(PANEL_BG),
+            outline: Some(PANEL_BORDER),
+            header_height: None,
+            size: SizeSpec::Auto,
+            content: Box::new(Node::Column(FlexSpec {
+                size: SizeSpec::Auto,
+                gap: CONTROL_GAP,
+                padding: Padding::default(),
+                align: Align::Start,
+                children: vec![
+                    Node::Row(FlexSpec {
+                        size: SizeSpec::Auto,
+                        gap: CONTROL_GAP,
+                        padding: Padding::default(),
+                        align: Align::Start,
+                        children: vec![
+                            self.param_knob(
+                                "width",
+                                "Width",
+                                PARAM_WIDTH_ID,
+                                self.params.width(),
+                                (0.0, 1.0),
+                                "%",
+                            ),
+                            self.param_knob(
+                                "diffusion",
+                                "Diffusion",
+                                PARAM_DIFFUSION_ID,
+                                self.params.diffusion(),
+                                (0.0, 1.0),
+                                "%",
+                            ),
+                        ],
+                    }),
+                    Node::Row(FlexSpec {
+                        size: SizeSpec::Auto,
+                        gap: CONTROL_GAP,
+                        padding: Padding::default(),
+                        align: Align::Start,
+                        children: vec![
+                            self.param_knob(
+                                "air-damping",
+                                "Air Damping",
+                                PARAM_AIR_DAMPING_ID,
+                                self.params.air_damping(),
+                                (0.0, 1.0),
+                                "%",
+                            ),
+                            self.param_toggle(
+                                "air-comp",
+                                "Air Comp",
+                                PARAM_AIR_COMP_ID,
+                                self.params.air_compensation(),
+                            ),
+                            self.param_toggle(
+                                "clean-dirty",
+                                "Dirty",
+                                PARAM_CLEAN_DIRTY_ID,
+                                self.params.clean_dirty() >= 0.5,
+                            ),
+                        ],
+                    }),
+                    mod_panel,
+                ],
+            })),
+        })
     }
 
-    fn draw_left_panel(&mut self, ui: &mut Ui<'_>, panel: Rect) {
-        let x = panel.origin.x + 16;
-        let y = panel.origin.y + PANEL_CONTENT_Y;
-
-        self.draw_param_knob(
-            ui,
-            "tension",
-            "Tension",
-            PARAM_TENSION_ID,
-            self.params.tension(),
-            (0.0, 1.0),
-            Point { x, y },
-            &format!("{:.0}%", self.params.tension() * 100.0),
-        );
-
-        self.draw_pull_button(
-            ui,
-            Rect {
-                origin: Point { x: x + 120, y },
-                size: Size {
-                    width: 110,
-                    height: BUTTON_H as u32,
-                },
-            },
-        );
-
-        self.draw_param_toggle(
-            ui,
-            "hold",
-            "Hold",
-            PARAM_HOLD_ID,
-            self.params.hold(),
-            Point {
-                x: x + 120,
-                y: y + 42,
-            },
-        );
-
-        self.draw_param_knob(
-            ui,
-            "pull-rate",
-            "Pull Rate",
-            PARAM_PULL_RATE_ID,
-            self.params.pull_rate_hz(),
-            (0.02, 2.0),
-            Point {
-                x,
-                y: y + KNOB_W + KNOB_GAP_Y,
-            },
-            &format!("{:.2} Hz", self.params.pull_rate_hz()),
-        );
-
-        self.draw_pull_shape_dropdown(
-            ui,
-            Rect {
-                origin: Point {
-                    x: x + 120,
-                    y: y + KNOB_W + KNOB_GAP_Y + 14,
-                },
-                size: Size {
-                    width: 150,
-                    height: DROPDOWN_H as u32,
-                },
-            },
-        );
-
-        self.draw_param_knob(
-            ui,
-            "rebound",
-            "Rebound",
-            PARAM_REBOUND_ID,
-            self.params.rebound(),
-            (0.0, 1.0),
-            Point {
-                x,
-                y: y + (KNOB_W + KNOB_GAP_Y) * 2,
-            },
-            &format!("{:.0}%", self.params.rebound() * 100.0),
-        );
-
-        self.draw_mode_cards(
-            ui,
-            Point {
-                x,
-                y: panel.origin.y + panel.size.height as i32 - (CARD_H + CARD_GAP) * 4 - 14,
-            },
-            panel.size.width as i32 - 32,
-        );
-    }
-
-    fn draw_center_panel(&mut self, ui: &mut Ui<'_>, panel: Rect) {
-        let map_rect = Rect {
-            origin: Point {
-                x: panel.origin.x + (panel.size.width as i32 - MAP_SIZE) / 2,
-                y: panel.origin.y + PANEL_CONTENT_Y,
-            },
-            size: Size {
-                width: MAP_SIZE as u32,
-                height: MAP_SIZE as u32,
-            },
-        };
-        self.draw_tension_map(ui, map_rect);
-
-        let row_y = map_rect.origin.y + MAP_SIZE + 20;
-        self.draw_param_knob(
-            ui,
-            "grain",
-            "Grain",
-            PARAM_GRAIN_CONTINUITY_ID,
-            self.params.grain_continuity(),
-            (0.0, 1.0),
-            Point {
-                x: map_rect.origin.x,
-                y: row_y,
-            },
-            &format!("{:.0}%", self.params.grain_continuity() * 100.0),
-        );
-        self.draw_param_knob(
-            ui,
-            "pitch-coupling",
-            "Pitch Coupling",
-            PARAM_PITCH_COUPLING_ID,
-            self.params.pitch_coupling(),
-            (0.0, 1.0),
-            Point {
-                x: map_rect.origin.x + KNOB_W + KNOB_GAP_X,
-                y: row_y,
-            },
-            &format!("{:.0}%", self.params.pitch_coupling() * 100.0),
-        );
-        self.draw_param_knob(
-            ui,
-            "feedback",
-            "Feedback",
-            PARAM_FEEDBACK_ID,
-            self.params.feedback(),
-            (0.0, 0.6),
-            Point {
-                x: map_rect.origin.x + (KNOB_W + KNOB_GAP_X) * 2,
-                y: row_y,
-            },
-            &format!("{:.0}%", self.params.feedback() / 0.6 * 100.0),
-        );
-    }
-
-    fn draw_right_panel(&mut self, ui: &mut Ui<'_>, panel: Rect) {
-        let x = panel.origin.x + 16;
-        let y = panel.origin.y + PANEL_CONTENT_Y;
-
-        self.draw_param_knob(
-            ui,
-            "width",
-            "Width",
-            PARAM_WIDTH_ID,
-            self.params.width(),
-            (0.0, 1.0),
-            Point { x, y },
-            &format!("{:.0}%", self.params.width() * 100.0),
-        );
-        self.draw_param_knob(
-            ui,
-            "diffusion",
-            "Diffusion",
-            PARAM_DIFFUSION_ID,
-            self.params.diffusion(),
-            (0.0, 1.0),
-            Point {
-                x: x + KNOB_W + KNOB_GAP_X,
-                y,
-            },
-            &format!("{:.0}%", self.params.diffusion() * 100.0),
-        );
-        self.draw_param_knob(
-            ui,
-            "air-damping",
-            "Air Damping",
-            PARAM_AIR_DAMPING_ID,
-            self.params.air_damping(),
-            (0.0, 1.0),
-            Point {
-                x,
-                y: y + KNOB_W + KNOB_GAP_Y,
-            },
-            &format!("{:.0}%", self.params.air_damping() * 100.0),
-        );
-
-        self.draw_param_toggle(
-            ui,
-            "air-comp",
-            "Air Comp",
-            PARAM_AIR_COMP_ID,
-            self.params.air_compensation(),
-            Point {
-                x: x + KNOB_W + KNOB_GAP_X,
-                y: y + KNOB_W + KNOB_GAP_Y + 14,
-            },
-        );
-
-        self.draw_param_toggle(
-            ui,
-            "clean-dirty",
-            "Dirty",
-            PARAM_CLEAN_DIRTY_ID,
-            self.params.clean_dirty() >= 0.5,
-            Point {
-                x,
-                y: y + (KNOB_W + KNOB_GAP_Y) * 2,
-            },
-        );
-
-        self.draw_mod_bank(
-            ui,
-            Rect {
-                origin: Point {
-                    x,
-                    y: y + (KNOB_W + KNOB_GAP_Y) * 2 + 50,
-                },
-                size: Size {
-                    width: (panel.size.width as i32 - 32) as u32,
-                    height: (panel.origin.y + panel.size.height as i32
-                        - (y + (KNOB_W + KNOB_GAP_Y) * 2 + 60)
-                        - 12) as u32,
-                },
-            },
-        );
-    }
-
-    fn draw_param_knob(
-        &mut self,
-        ui: &mut Ui<'_>,
-        key: &str,
-        name: &str,
-        param_id: ClapId,
-        mut value: f32,
-        range: (f32, f32),
-        position: Point,
-        value_label: &str,
-    ) {
-        let prev = ui.cursor();
-        ui.set_cursor(position);
-        let response = ui.knob_with_key_labels(key, name, value_label, &mut value, range);
-        let id = WidgetId::from_label(key);
-        self.begin_if_needed(id, param_id, response.active);
-        if response.changed {
-            self.params.set_param(param_id, value);
-            self.push_value(param_id, value);
+    fn build_meter_panel(&self) -> Node<'static, GuiState> {
+        let labels = [
+            "In L", "In R", "Elastic", "Warp", "Space", "Feed", "Out L", "Out R", "Tension",
+        ];
+        let mut children = Vec::with_capacity(labels.len());
+        for (index, label) in labels.iter().enumerate() {
+            let meter_index = index;
+            let meter_label = (*label).to_string();
+            children.push(Node::Widget(WidgetSpec {
+                key: format!("meter-{meter_index}"),
+                size: SizeSpec::Fixed(Size {
+                    width: METER_CELL_W,
+                    height: METER_CELL_H,
+                }),
+                render: Box::new(move |ui, rect, state: &mut GuiState| {
+                    state.draw_meter_cell(ui, rect, meter_index, &meter_label);
+                }),
+            }));
         }
-        ui.set_cursor(prev);
+
+        Node::Panel(PanelSpec {
+            key: "meters-panel".to_string(),
+            title: Some("Stage Meters".to_string()),
+            padding: 10,
+            background: Some(PANEL_BG),
+            outline: Some(PANEL_BORDER),
+            header_height: None,
+            size: SizeSpec::Auto,
+            content: Box::new(Node::Row(FlexSpec {
+                size: SizeSpec::Auto,
+                gap: CONTROL_GAP,
+                padding: Padding::default(),
+                align: Align::Start,
+                children,
+            })),
+        })
     }
 
-    fn draw_param_toggle(
-        &mut self,
-        ui: &mut Ui<'_>,
+    fn param_knob(
+        &self,
         key: &str,
         label: &str,
         param_id: ClapId,
-        mut value: bool,
-        position: Point,
-    ) {
-        let prev = ui.cursor();
-        ui.set_cursor(position);
-        let response = ui.toggle_with_key(key, label, &mut value, TOGGLE_W, TOGGLE_H);
-        if response.changed {
-            self.set_param_toggle(param_id, value);
-        }
-        ui.set_cursor(prev);
+        value: f32,
+        range: (f32, f32),
+        unit: &'static str,
+    ) -> Node<'static, GuiState> {
+        let key_owned = key.to_string();
+        let label_owned = label.to_string();
+        Node::Knob(KnobSpec {
+            key: key_owned,
+            label: label_owned,
+            value_label: Some(format_value(value, range, unit)),
+            value,
+            range,
+            size: SizeSpec::Auto,
+            on_interaction: Some(Box::new(move |state: &mut GuiState, event: KnobEvent| {
+                state.params.set_param(param_id, event.value);
+                state.push_value(param_id, event.value);
+            })),
+        })
     }
 
-    fn draw_pull_button(&mut self, ui: &mut Ui<'_>, rect: Rect) {
-        let response = ui.region_with_key("pull-button", rect);
-        let active = response.active || self.params.pull_trigger();
-
-        if response.pressed {
-            self.push_begin(PARAM_PULL_TRIGGER_ID);
-            self.params.set_param(PARAM_PULL_TRIGGER_ID, 1.0);
-            self.push_value(PARAM_PULL_TRIGGER_ID, 1.0);
-        }
-        if response.released {
-            self.params.set_param(PARAM_PULL_TRIGGER_ID, 0.0);
-            self.push_value(PARAM_PULL_TRIGGER_ID, 0.0);
-            self.push_end(PARAM_PULL_TRIGGER_ID);
-        }
-
-        let fill = if active {
-            ACCENT
-        } else if response.hovered {
-            Color::rgb(62, 74, 94)
-        } else {
-            Color::rgb(44, 52, 66)
-        };
-        ui.canvas().fill_rect(rect, fill);
-        ui.canvas().stroke_rect(rect, 1, PANEL_BORDER);
-        ui.text_with_color(
-            Point {
-                x: rect.origin.x + 36,
-                y: rect.origin.y + 8,
+    fn param_toggle(
+        &self,
+        key: &str,
+        label: &str,
+        param_id: ClapId,
+        value: bool,
+    ) -> Node<'static, GuiState> {
+        Node::Toggle(ToggleSpec {
+            key: key.to_string(),
+            label: label.to_string(),
+            value,
+            control_size: Size {
+                width: TOGGLE_W,
+                height: TOGGLE_H,
             },
-            "PULL",
-            Color::rgb(12, 14, 20),
-        );
+            size: SizeSpec::Auto,
+            on_interaction: Some(Box::new(move |state: &mut GuiState, event: ToggleEvent| {
+                let raw = if event.value { 1.0 } else { 0.0 };
+                state.params.set_param(param_id, raw);
+                state.push_begin(param_id);
+                state.push_value(param_id, raw);
+                state.push_end(param_id);
+            })),
+        })
     }
 
-    fn draw_pull_shape_dropdown(&mut self, ui: &mut Ui<'_>, rect: Rect) {
-        let prev = ui.cursor();
-        ui.set_cursor(rect.origin);
-        let mut selected = self.params.pull_shape_index();
-        let response = ui.dropdown_with_key(
-            "pull-shape",
-            "Pull Shape",
-            &PULL_SHAPE_LABELS,
-            &mut selected,
-            rect.size.width as i32,
-            rect.size.height as i32,
-        );
-        if response.changed {
-            let value = pull_shape_value_from_index(selected);
-            self.params.set_param(PARAM_PULL_SHAPE_ID, value);
-            self.push_begin(PARAM_PULL_SHAPE_ID);
-            self.push_value(PARAM_PULL_SHAPE_ID, value);
-            self.push_end(PARAM_PULL_SHAPE_ID);
+    fn pull_button(&self) -> Node<'static, GuiState> {
+        Node::Region(RegionSpec {
+            key: "pull-button".to_string(),
+            size: Size {
+                width: BUTTON_WIDTH,
+                height: BUTTON_HEIGHT,
+            },
+            on_interaction: Some(Box::new(|state: &mut GuiState, event| {
+                if event.response.pressed {
+                    state.push_begin(PARAM_PULL_TRIGGER_ID);
+                    state.params.set_param(PARAM_PULL_TRIGGER_ID, 1.0);
+                    state.push_value(PARAM_PULL_TRIGGER_ID, 1.0);
+                }
+                if event.response.released {
+                    state.params.set_param(PARAM_PULL_TRIGGER_ID, 0.0);
+                    state.push_value(PARAM_PULL_TRIGGER_ID, 0.0);
+                    state.push_end(PARAM_PULL_TRIGGER_ID);
+                }
+            })),
+            draw: Some(Box::new(|canvas, rect, state: &mut GuiState, response| {
+                let active = response.active || state.params.pull_trigger();
+                let fill = if active {
+                    ACCENT
+                } else if response.hovered {
+                    Color::rgb(62, 74, 94)
+                } else {
+                    Color::rgb(44, 52, 66)
+                };
+                canvas.fill_rect(rect, fill);
+                canvas.stroke_rect(rect, 1, PANEL_BORDER);
+                canvas.draw_text(
+                    Point {
+                        x: rect.origin.x + 38,
+                        y: rect.origin.y + 8,
+                    },
+                    "PULL",
+                    Color::rgb(12, 14, 20),
+                    1,
+                );
+            })),
+        })
+    }
+
+    fn pull_shape_dropdown(&self) -> Node<'static, GuiState> {
+        Node::Dropdown(DropdownSpec {
+            key: "pull-shape".to_string(),
+            label: "Pull Shape".to_string(),
+            options: PULL_SHAPE_LABELS.iter().map(|v| (*v).to_string()).collect(),
+            selected: self.params.pull_shape_index(),
+            control_size: Size {
+                width: DROPDOWN_W,
+                height: DROPDOWN_H,
+            },
+            size: SizeSpec::Auto,
+            on_interaction: Some(Box::new(|state: &mut GuiState, event: DropdownEvent| {
+                if event.response.changed {
+                    let value = pull_shape_value_from_index(event.selected);
+                    state.params.set_param(PARAM_PULL_SHAPE_ID, value);
+                    state.push_begin(PARAM_PULL_SHAPE_ID);
+                    state.push_value(PARAM_PULL_SHAPE_ID, value);
+                    state.push_end(PARAM_PULL_SHAPE_ID);
+                }
+            })),
+        })
+    }
+
+    fn mode_button(&self, mode: ModeCard) -> Node<'static, GuiState> {
+        Node::Button(ButtonSpec {
+            key: format!("mode-{}", mode.key()),
+            label: format!("{}", mode.title()),
+            control_size: Size {
+                width: 220,
+                height: 28,
+            },
+            size: SizeSpec::Auto,
+            on_interaction: Some(Box::new(move |state: &mut GuiState, event: ButtonEvent| {
+                if event.response.clicked {
+                    state.apply_mode(mode);
+                }
+            })),
+        })
+    }
+
+    fn mod_run_toggle(&self) -> Node<'static, GuiState> {
+        Node::Toggle(ToggleSpec {
+            key: "mod-run".to_string(),
+            label: "Run".to_string(),
+            value: self.mod_bank.run,
+            control_size: Size {
+                width: TOGGLE_W,
+                height: TOGGLE_H,
+            },
+            size: SizeSpec::Auto,
+            on_interaction: Some(Box::new(|state: &mut GuiState, event: ToggleEvent| {
+                state.mod_bank.run = event.value;
+            })),
+        })
+    }
+
+    fn mod_row(
+        &self,
+        label: &str,
+        rate: ModParam,
+        depth: ModParam,
+        drift: Option<ModParam>,
+    ) -> Node<'static, GuiState> {
+        let mut children = vec![
+            Node::Label(LabelSpec {
+                text: label.to_string(),
+                size: SizeSpec::Auto,
+                color: Some(TITLE),
+            }),
+            self.mod_knob(format!("{label}-rate"), "Rate", rate, (0.01, 1.5)),
+            self.mod_knob(format!("{label}-depth"), "Depth", depth, (0.0, 1.0)),
+        ];
+        if let Some(drift_param) = drift {
+            children.push(self.mod_knob(
+                format!("{label}-drift"),
+                "Drift",
+                drift_param,
+                (0.0, 1.0),
+            ));
         }
-        ui.set_cursor(prev);
+        Node::Row(FlexSpec {
+            size: SizeSpec::Auto,
+            gap: CONTROL_GAP,
+            padding: Padding::default(),
+            align: Align::Start,
+            children,
+        })
     }
 
-    fn draw_mode_cards(&mut self, ui: &mut Ui<'_>, origin: Point, width: i32) {
-        for (idx, mode) in ModeCard::ALL.iter().enumerate() {
-            let y = origin.y + idx as i32 * (CARD_H + CARD_GAP);
-            let rect = Rect {
-                origin: Point { x: origin.x, y },
-                size: Size {
-                    width: width as u32,
-                    height: CARD_H as u32,
-                },
+    fn mod_knob(
+        &self,
+        key: String,
+        label: &'static str,
+        param: ModParam,
+        range: (f32, f32),
+    ) -> Node<'static, GuiState> {
+        let value = self.mod_bank.get(param);
+        Node::Knob(KnobSpec {
+            key,
+            label: label.to_string(),
+            value_label: Some(format!("{value:.2}")),
+            value,
+            range,
+            size: SizeSpec::Auto,
+            on_interaction: Some(Box::new(move |state: &mut GuiState, event: KnobEvent| {
+                state.mod_bank.set(param, event.value);
+            })),
+        })
+    }
+
+    fn mod_routes_grid(&self) -> Node<'static, GuiState> {
+        let mut children = Vec::with_capacity(20);
+        for src in 0..4 {
+            let label = match src {
+                0 => "A",
+                1 => "B",
+                2 => "R",
+                _ => "E",
             };
-            let response = ui.region_with_key(mode.key(), rect);
-            if response.pressed {
-                self.apply_mode(*mode);
+            children.push(Node::Label(LabelSpec {
+                text: label.to_string(),
+                size: SizeSpec::Auto,
+                color: Some(TITLE),
+            }));
+            for dst in 0..4 {
+                let key = format!("route-{src}-{dst}");
+                let value = self.mod_bank.routes[src][dst];
+                children.push(Node::Toggle(ToggleSpec {
+                    key,
+                    label: "".to_string(),
+                    value,
+                    control_size: Size {
+                        width: 20,
+                        height: 12,
+                    },
+                    size: SizeSpec::Auto,
+                    on_interaction: Some(Box::new(
+                        move |state: &mut GuiState, event: ToggleEvent| {
+                            state.mod_bank.routes[src][dst] = event.value;
+                        },
+                    )),
+                }));
             }
-
-            let fill = if self.active_mode == *mode {
-                CARD_ACTIVE
-            } else if response.hovered {
-                Color::rgb(43, 51, 66)
-            } else {
-                CARD_IDLE
-            };
-            ui.canvas().fill_rect(rect, fill);
-            ui.canvas().stroke_rect(rect, 1, PANEL_BORDER);
-            ui.text_with_color(
-                Point {
-                    x: rect.origin.x + 10,
-                    y: rect.origin.y + 9,
-                },
-                mode.title(),
-                TITLE,
-            );
-            ui.text_with_color(
-                Point {
-                    x: rect.origin.x + 10,
-                    y: rect.origin.y + 26,
-                },
-                mode.subtitle(),
-                SUBTITLE,
-            );
         }
-    }
 
-    fn apply_mode(&mut self, mode: ModeCard) {
-        self.active_mode = mode;
-        let updates = mode.updates();
-        for (param_id, value) in updates {
-            self.push_begin(*param_id);
-            self.params.set_param(*param_id, *value);
-            self.push_value(*param_id, *value);
-            self.push_end(*param_id);
-        }
+        Node::Grid(GridSpec {
+            size: SizeSpec::Auto,
+            columns: 5,
+            cell_size: Size {
+                width: 24,
+                height: 18,
+            },
+            gap: 4,
+            padding: Padding::default(),
+            children,
+        })
     }
 
     fn draw_tension_map(&mut self, ui: &mut Ui<'_>, rect: Rect) {
-        {
-            let canvas = ui.canvas();
-            canvas.fill_rect(rect, Color::rgb(22, 27, 35));
-            canvas.stroke_rect(rect, 1, PANEL_BORDER);
+        let canvas = ui.canvas();
+        canvas.fill_rect(rect, Color::rgb(22, 27, 35));
+        canvas.stroke_rect(rect, 1, PANEL_BORDER);
 
-            let center_x = rect.origin.x + rect.size.width as i32 / 2;
-            let center_y = rect.origin.y + rect.size.height as i32 / 2;
-            canvas.draw_line(
-                Point {
-                    x: center_x,
-                    y: rect.origin.y,
-                },
-                Point {
-                    x: center_x,
-                    y: rect.origin.y + rect.size.height as i32,
-                },
-                Color::rgb(52, 62, 77),
-            );
-            canvas.draw_line(
-                Point {
-                    x: rect.origin.x,
-                    y: center_y,
-                },
-                Point {
-                    x: rect.origin.x + rect.size.width as i32,
-                    y: center_y,
-                },
-                Color::rgb(52, 62, 77),
-            );
-        }
+        let center_x = rect.origin.x + rect.size.width as i32 / 2;
+        let center_y = rect.origin.y + rect.size.height as i32 / 2;
+        canvas.draw_line(
+            Point {
+                x: center_x,
+                y: rect.origin.y,
+            },
+            Point {
+                x: center_x,
+                y: rect.origin.y + rect.size.height as i32,
+            },
+            Color::rgb(52, 62, 77),
+        );
+        canvas.draw_line(
+            Point {
+                x: rect.origin.x,
+                y: center_y,
+            },
+            Point {
+                x: rect.origin.x + rect.size.width as i32,
+                y: center_y,
+            },
+            Color::rgb(52, 62, 77),
+        );
 
-        let response = ui.region_with_key("tension-map", rect);
-        let input = ui.input();
+        let response = ui.region_with_key("tension-map-region", rect);
+        let pointer = ui.input().pointer_pos;
         if response.pressed {
             self.map_dragging = true;
             self.push_begin(PARAM_PULL_DIRECTION_ID);
             self.push_begin(PARAM_ELASTICITY_ID);
-            self.update_map_from_pointer(input.pointer_pos, rect);
+            self.update_map_from_pointer(pointer, rect);
         }
         if response.dragged && self.map_dragging {
-            self.update_map_from_pointer(input.pointer_pos, rect);
+            self.update_map_from_pointer(pointer, rect);
         }
         if response.released && self.map_dragging {
             self.push_end(PARAM_PULL_DIRECTION_ID);
@@ -767,71 +840,130 @@ impl GuiState {
             self.map_trace.remove(0);
         }
 
-        {
-            let canvas = ui.canvas();
-            for pair in self.map_trace.windows(2) {
-                if let [a, b] = pair {
-                    canvas.draw_line(*a, *b, MAP_TRACE);
-                }
+        for pair in self.map_trace.windows(2) {
+            if let [a, b] = pair {
+                canvas.draw_line(*a, *b, MAP_TRACE);
             }
+        }
 
-            canvas.draw_line(
-                Point {
-                    x: px,
-                    y: rect.origin.y,
-                },
-                Point {
-                    x: px,
-                    y: rect.origin.y + rect.size.height as i32,
-                },
-                MAP_LINE,
-            );
-            canvas.draw_line(
-                Point {
-                    x: rect.origin.x,
-                    y: py,
-                },
-                Point {
-                    x: rect.origin.x + rect.size.width as i32,
-                    y: py,
-                },
-                MAP_LINE,
-            );
+        canvas.draw_line(
+            Point {
+                x: px,
+                y: rect.origin.y,
+            },
+            Point {
+                x: px,
+                y: rect.origin.y + rect.size.height as i32,
+            },
+            MAP_LINE,
+        );
+        canvas.draw_line(
+            Point {
+                x: rect.origin.x,
+                y: py,
+            },
+            Point {
+                x: rect.origin.x + rect.size.width as i32,
+                y: py,
+            },
+            MAP_LINE,
+        );
 
-            canvas.fill_circle(point, 8, MAP_DOT);
-            canvas.stroke_circle(point, 12, 2, ACCENT);
+        canvas.fill_circle(point, 8, MAP_DOT);
+        canvas.stroke_circle(point, 12, 2, ACCENT);
+
+        canvas.draw_text(
+            Point {
+                x: rect.origin.x + 8,
+                y: rect.origin.y - 14,
+            },
+            "BACKWARD",
+            SUBTITLE,
+            1,
+        );
+        canvas.draw_text(
+            Point {
+                x: rect.origin.x + rect.size.width as i32 - 58,
+                y: rect.origin.y - 14,
+            },
+            "FORWARD",
+            SUBTITLE,
+            1,
+        );
+        canvas.draw_text(
+            Point {
+                x: rect.origin.x + 2,
+                y: rect.origin.y + rect.size.height as i32 + 6,
+            },
+            "VISCOUS",
+            SUBTITLE,
+            1,
+        );
+        canvas.draw_text(
+            Point {
+                x: rect.origin.x + rect.size.width as i32 - 40,
+                y: rect.origin.y + rect.size.height as i32 + 6,
+            },
+            "SPRING",
+            SUBTITLE,
+            1,
+        );
+    }
+
+    fn draw_meter_cell(&mut self, ui: &mut Ui<'_>, rect: Rect, index: usize, label: &str) {
+        let values = [
+            self.status.input_left(),
+            self.status.input_right(),
+            self.status.elastic_activity(),
+            self.status.warp_activity(),
+            self.status.space_activity(),
+            self.status.feedback_activity(),
+            self.status.output_left(),
+            self.status.output_right(),
+            self.status.tension_activity(),
+        ];
+
+        let now = Instant::now();
+        let dt = (now - self.last_frame).as_secs_f32().clamp(0.0, 0.1);
+        self.last_frame = now;
+        self.meter_smooth[index] += (values[index] - self.meter_smooth[index]) * (dt * 12.0);
+        let value = self.meter_smooth[index].clamp(0.0, 1.0);
+
+        let bar_rect = Rect {
+            origin: Point {
+                x: rect.origin.x,
+                y: rect.origin.y,
+            },
+            size: Size {
+                width: rect.size.width,
+                height: rect.size.height.saturating_sub(18),
+            },
+        };
+        ui.canvas().fill_rect(bar_rect, Color::rgb(32, 37, 46));
+        ui.canvas().stroke_rect(bar_rect, 1, PANEL_BORDER);
+
+        let fill_h = (bar_rect.size.height as f32 * value).round() as u32;
+        if fill_h > 0 {
+            let fill_rect = Rect {
+                origin: Point {
+                    x: bar_rect.origin.x,
+                    y: bar_rect.origin.y + bar_rect.size.height as i32 - fill_h as i32,
+                },
+                size: Size {
+                    width: bar_rect.size.width,
+                    height: fill_h,
+                },
+            };
+            let color = if value > 0.85 { METER_WARN } else { METER_FILL };
+            ui.canvas().fill_rect(fill_rect, color);
         }
 
         ui.text_with_color(
             Point {
-                x: rect.origin.x + 8,
-                y: rect.origin.y - 16,
+                x: rect.origin.x,
+                y: rect.origin.y + rect.size.height as i32 - 14,
             },
-            "Backward",
-            SUBTITLE,
-        );
-        ui.text_with_color(
-            Point {
-                x: rect.origin.x + rect.size.width as i32 - 58,
-                y: rect.origin.y - 16,
-            },
-            "Forward",
-            SUBTITLE,
-        );
-        ui.text_with_color(
-            Point {
-                x: rect.origin.x - 2,
-                y: rect.origin.y + rect.size.height as i32 + 6,
-            },
-            "Viscous",
-            SUBTITLE,
-        );
-        ui.text_with_color(
-            Point {
-                x: rect.origin.x + rect.size.width as i32 - 44,
-                y: rect.origin.y + rect.size.height as i32 + 6,
-            },
-            "Spring",
+            label,
             SUBTITLE,
         );
     }
@@ -847,190 +979,43 @@ impl GuiState {
         self.push_value(PARAM_ELASTICITY_ID, y);
     }
 
-    fn draw_mod_bank(&mut self, ui: &mut Ui<'_>, rect: Rect) {
-        {
-            let canvas = ui.canvas();
-            canvas.fill_rect(rect, Color::rgb(21, 26, 34));
-            canvas.stroke_rect(rect, 1, PANEL_BORDER);
-        }
-        ui.text_with_color(
-            Point {
-                x: rect.origin.x + 8,
-                y: rect.origin.y + 6,
-            },
-            "Slow Mod Bank",
-            TITLE,
-        );
+    fn set_param_immediate(&self, param_id: ClapId, value: f32) {
+        self.params.set_param(param_id, value);
+        self.push_value(param_id, value);
+    }
 
-        let mut row_y = rect.origin.y + 24;
-        let col_x = [rect.origin.x + 8, rect.origin.x + 82, rect.origin.x + 156];
-
-        Self::draw_local_toggle(
-            ui,
-            "mod-run",
-            "Run",
-            &mut self.mod_bank.run,
-            Point {
-                x: rect.origin.x + rect.size.width as i32 - 76,
-                y: rect.origin.y + 6,
-            },
-        );
-
-        Self::draw_mod_row(
-            ui,
-            "LFO A",
-            &mut self.mod_bank.lfo_a_rate,
-            &mut self.mod_bank.lfo_a_depth,
-            Some(&mut self.mod_bank.lfo_a_drift),
-            row_y,
-            col_x,
-        );
-        row_y += 44;
-        Self::draw_mod_row(
-            ui,
-            "LFO B",
-            &mut self.mod_bank.lfo_b_rate,
-            &mut self.mod_bank.lfo_b_depth,
-            Some(&mut self.mod_bank.lfo_b_drift),
-            row_y,
-            col_x,
-        );
-        row_y += 44;
-        Self::draw_mod_row(
-            ui,
-            "Random",
-            &mut self.mod_bank.walk_rate,
-            &mut self.mod_bank.walk_depth,
-            None,
-            row_y,
-            col_x,
-        );
-        row_y += 44;
-        Self::draw_mod_row(
-            ui,
-            "Env",
-            &mut self.mod_bank.env_sensitivity,
-            &mut self.mod_bank.env_depth,
-            None,
-            row_y,
-            col_x,
-        );
-
-        let grid_origin = Point {
-            x: rect.origin.x + 8,
-            y: row_y + 42,
-        };
-        ui.text_with_color(
-            Point {
-                x: grid_origin.x,
-                y: grid_origin.y - 16,
-            },
-            "Routes: Ten Dir Grn Wid",
-            SUBTITLE,
-        );
-        for src in 0..4 {
-            ui.text_with_color(
-                Point {
-                    x: grid_origin.x,
-                    y: grid_origin.y + src as i32 * 18,
-                },
-                match src {
-                    0 => "A",
-                    1 => "B",
-                    2 => "R",
-                    _ => "E",
-                },
-                TITLE,
-            );
-            for dst in 0..4 {
-                let key = format!("route-{src}-{dst}");
-                Self::draw_local_toggle(
-                    ui,
-                    &key,
-                    "",
-                    &mut self.mod_bank.routes[src][dst],
-                    Point {
-                        x: grid_origin.x + 18 + dst as i32 * 26,
-                        y: grid_origin.y + src as i32 * 18,
-                    },
-                );
-            }
+    fn apply_mode(&mut self, mode: ModeCard) {
+        self.active_mode = mode;
+        for (param_id, value) in mode.updates() {
+            self.push_begin(*param_id);
+            self.params.set_param(*param_id, *value);
+            self.push_value(*param_id, *value);
+            self.push_end(*param_id);
         }
     }
 
-    fn draw_mod_row(
-        ui: &mut Ui<'_>,
-        label: &str,
-        rate: &mut f32,
-        depth: &mut f32,
-        drift: Option<&mut f32>,
-        y: i32,
-        cols: [i32; 3],
-    ) {
-        ui.text_with_color(Point { x: cols[0], y }, label, TITLE);
-        Self::draw_local_knob(
-            ui,
-            &format!("{label}-rate"),
-            "R",
-            rate,
-            (0.01, 1.5),
-            Point {
-                x: cols[0] + 18,
-                y: y - 10,
-            },
-        );
-        Self::draw_local_knob(
-            ui,
-            &format!("{label}-depth"),
-            "D",
-            depth,
-            (0.0, 1.0),
-            Point {
-                x: cols[1] + 18,
-                y: y - 10,
-            },
-        );
-        if let Some(drift) = drift {
-            Self::draw_local_knob(
-                ui,
-                &format!("{label}-drift"),
-                "Dr",
-                drift,
-                (0.0, 1.0),
-                Point {
-                    x: cols[2] + 18,
-                    y: y - 10,
-                },
-            );
+    fn request_flush(&self) {
+        if let Some(requester) = self.param_requester {
+            requester.request_flush();
         }
     }
 
-    fn draw_local_knob(
-        ui: &mut Ui<'_>,
-        key: &str,
-        label: &str,
-        value: &mut f32,
-        range: (f32, f32),
-        position: Point,
-    ) {
-        let prev = ui.cursor();
-        ui.set_cursor(position);
-        let value_label = format!("{:.2}", *value);
-        let _ = ui.knob_with_key_labels(key, label, &value_label, value, range);
-        ui.set_cursor(prev);
+    fn push_value(&self, param_id: ClapId, value: f32) {
+        self.automation_queue
+            .push_value(&self.automation_config, param_id, value as f64);
+        self.request_flush();
     }
 
-    fn draw_local_toggle(
-        ui: &mut Ui<'_>,
-        key: &str,
-        label: &str,
-        value: &mut bool,
-        position: Point,
-    ) {
-        let prev = ui.cursor();
-        ui.set_cursor(position);
-        let _ = ui.toggle_with_key(key, label, value, 20, 12);
-        ui.set_cursor(prev);
+    fn push_begin(&self, param_id: ClapId) {
+        self.automation_queue
+            .push_gesture_begin(&self.automation_config, param_id);
+        self.request_flush();
+    }
+
+    fn push_end(&self, param_id: ClapId) {
+        self.automation_queue
+            .push_gesture_end(&self.automation_config, param_id);
+        self.request_flush();
     }
 
     fn apply_modulation(&mut self, dt: f32) {
@@ -1089,81 +1074,6 @@ impl GuiState {
             }
         }
     }
-
-    fn draw_meters(&mut self, ui: &mut Ui<'_>, panel: Rect) {
-        let values = [
-            self.status.input_left(),
-            self.status.input_right(),
-            self.status.elastic_activity(),
-            self.status.warp_activity(),
-            self.status.space_activity(),
-            self.status.feedback_activity(),
-            self.status.output_left(),
-            self.status.output_right(),
-            self.status.tension_activity(),
-        ];
-        let labels = [
-            "In L", "In R", "Elastic", "Warp", "Space", "Feed", "Out L", "Out R", "Tension",
-        ];
-
-        let inner_x = panel.origin.x + 16;
-        let inner_y = panel.origin.y + PANEL_CONTENT_Y;
-        let meter_w = ((panel.size.width as i32 - 32) / labels.len() as i32).max(14);
-        let max_h = panel.size.height as i32 - PANEL_CONTENT_Y - 18;
-
-        for (index, label) in labels.iter().enumerate() {
-            self.meter_smooth[index] += (values[index] - self.meter_smooth[index]) * 0.2;
-            let value = self.meter_smooth[index].clamp(0.0, 1.0);
-            let x = inner_x + index as i32 * meter_w;
-            let bar_rect = Rect {
-                origin: Point { x, y: inner_y },
-                size: Size {
-                    width: (meter_w - 8).max(8) as u32,
-                    height: max_h.max(8) as u32,
-                },
-            };
-            ui.canvas().fill_rect(bar_rect, Color::rgb(32, 37, 46));
-            ui.canvas().stroke_rect(bar_rect, 1, PANEL_BORDER);
-
-            let fill_h = (bar_rect.size.height as f32 * value).round() as u32;
-            if fill_h > 0 {
-                let fill_rect = Rect {
-                    origin: Point {
-                        x: bar_rect.origin.x,
-                        y: bar_rect.origin.y + bar_rect.size.height as i32 - fill_h as i32,
-                    },
-                    size: Size {
-                        width: bar_rect.size.width,
-                        height: fill_h,
-                    },
-                };
-                let color = if value > 0.85 { METER_WARN } else { METER_FILL };
-                ui.canvas().fill_rect(fill_rect, color);
-            }
-
-            ui.text_with_color(
-                Point {
-                    x,
-                    y: inner_y + max_h + 4,
-                },
-                label,
-                SUBTITLE,
-            );
-        }
-    }
-}
-
-fn draw_panel(ui: &mut Ui<'_>, rect: Rect, title: &str) {
-    ui.canvas().fill_rect(rect, PANEL_BG);
-    ui.canvas().stroke_rect(rect, 1, PANEL_BORDER);
-    ui.text_with_color(
-        Point {
-            x: rect.origin.x + 10,
-            y: rect.origin.y + PANEL_TITLE_Y,
-        },
-        title,
-        TITLE,
-    );
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -1175,19 +1085,12 @@ enum ModeCard {
 }
 
 impl ModeCard {
-    const ALL: [ModeCard; 4] = [
-        Self::TapeTugPad,
-        Self::ElasticDroneMaker,
-        Self::RatchetAtmos,
-        Self::GhostPercTail,
-    ];
-
     fn key(self) -> &'static str {
         match self {
-            Self::TapeTugPad => "mode-tape-tug",
-            Self::ElasticDroneMaker => "mode-drone-maker",
-            Self::RatchetAtmos => "mode-ratchet-atmos",
-            Self::GhostPercTail => "mode-ghost-tail",
+            Self::TapeTugPad => "tape-tug",
+            Self::ElasticDroneMaker => "drone-maker",
+            Self::RatchetAtmos => "ratchet-atmos",
+            Self::GhostPercTail => "ghost-tail",
         }
     }
 
@@ -1197,15 +1100,6 @@ impl ModeCard {
             Self::ElasticDroneMaker => "Elastic Drone Maker",
             Self::RatchetAtmos => "Ratchet Atmos",
             Self::GhostPercTail => "Ghost Perc Tail",
-        }
-    }
-
-    fn subtitle(self) -> &'static str {
-        match self {
-            Self::TapeTugPad => "Smooth wide stretch",
-            Self::ElasticDroneMaker => "Held drift feedback",
-            Self::RatchetAtmos => "Stepped pull motion",
-            Self::GhostPercTail => "Sustain pull focus",
         }
     }
 
@@ -1257,6 +1151,20 @@ impl ModeCard {
     }
 }
 
+#[derive(Copy, Clone)]
+enum ModParam {
+    LfoARate,
+    LfoADepth,
+    LfoADrift,
+    LfoBRate,
+    LfoBDepth,
+    LfoBDrift,
+    WalkRate,
+    WalkDepth,
+    EnvSensitivity,
+    EnvDepth,
+}
+
 struct ModBank {
     run: bool,
     lfo_a_rate: f32,
@@ -1281,17 +1189,17 @@ struct ModBank {
 impl Default for ModBank {
     fn default() -> Self {
         Self {
-            run: false,
-            lfo_a_rate: 0.16,
-            lfo_a_depth: 0.35,
+            run: true,
+            lfo_a_rate: 0.09,
+            lfo_a_depth: 0.14,
             lfo_a_drift: 0.2,
-            lfo_b_rate: 0.09,
-            lfo_b_depth: 0.28,
-            lfo_b_drift: 0.25,
-            walk_rate: 0.12,
-            walk_depth: 0.22,
-            env_sensitivity: 0.4,
-            env_depth: 0.35,
+            lfo_b_rate: 0.04,
+            lfo_b_depth: 0.12,
+            lfo_b_drift: 0.16,
+            walk_rate: 0.25,
+            walk_depth: 0.18,
+            env_sensitivity: 0.46,
+            env_depth: 0.12,
             routes: [
                 [true, false, false, false],
                 [false, true, false, false],
@@ -1299,13 +1207,50 @@ impl Default for ModBank {
                 [false, false, false, true],
             ],
             phase_a: 0.0,
-            phase_b: 0.3,
+            phase_b: 0.0,
             walk_state: 0.0,
             env_state: 0.0,
             last_sent: [0.0; 4],
-            noise_state: 0x1A2B_3C4D,
+            noise_state: 0xA5A5_9151,
         }
     }
+}
+
+impl ModBank {
+    fn get(&self, param: ModParam) -> f32 {
+        match param {
+            ModParam::LfoARate => self.lfo_a_rate,
+            ModParam::LfoADepth => self.lfo_a_depth,
+            ModParam::LfoADrift => self.lfo_a_drift,
+            ModParam::LfoBRate => self.lfo_b_rate,
+            ModParam::LfoBDepth => self.lfo_b_depth,
+            ModParam::LfoBDrift => self.lfo_b_drift,
+            ModParam::WalkRate => self.walk_rate,
+            ModParam::WalkDepth => self.walk_depth,
+            ModParam::EnvSensitivity => self.env_sensitivity,
+            ModParam::EnvDepth => self.env_depth,
+        }
+    }
+
+    fn set(&mut self, param: ModParam, value: f32) {
+        match param {
+            ModParam::LfoARate => self.lfo_a_rate = value,
+            ModParam::LfoADepth => self.lfo_a_depth = value,
+            ModParam::LfoADrift => self.lfo_a_drift = value,
+            ModParam::LfoBRate => self.lfo_b_rate = value,
+            ModParam::LfoBDepth => self.lfo_b_depth = value,
+            ModParam::LfoBDrift => self.lfo_b_drift = value,
+            ModParam::WalkRate => self.walk_rate = value,
+            ModParam::WalkDepth => self.walk_depth = value,
+            ModParam::EnvSensitivity => self.env_sensitivity = value,
+            ModParam::EnvDepth => self.env_depth = value,
+        }
+    }
+}
+
+fn signed_noise(state: &mut u32) -> f32 {
+    *state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+    ((*state >> 8) as f32 / ((1u32 << 24) as f32)) * 2.0 - 1.0
 }
 
 fn triangle(phase: f32) -> f32 {
@@ -1317,11 +1262,14 @@ fn triangle(phase: f32) -> f32 {
     }
 }
 
-fn signed_noise(state: &mut u32) -> f32 {
-    let mut x = *state;
-    x ^= x << 13;
-    x ^= x >> 17;
-    x ^= x << 5;
-    *state = x;
-    ((x as f32 / u32::MAX as f32) * 2.0) - 1.0
+fn format_value(value: f32, range: (f32, f32), unit: &'static str) -> String {
+    match unit {
+        "%" => {
+            let span = (range.1 - range.0).max(1.0e-6);
+            let pct = ((value - range.0) / span * 100.0).clamp(0.0, 100.0);
+            format!("{pct:.0}%")
+        }
+        "Hz" => format!("{value:.2} Hz"),
+        _ => format!("{value:.2}"),
+    }
 }

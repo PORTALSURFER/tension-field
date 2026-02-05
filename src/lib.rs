@@ -75,13 +75,11 @@ impl DefaultPluginFactory for TensionFieldPlugin {
     ) -> Result<Self::MainThread<'a>, PluginError> {
         #[cfg(target_os = "windows")]
         {
+            let (width, height) = gui::preferred_window_size(&shared.params, &shared.status);
             Ok(TensionFieldMainThread {
                 shared,
                 host: host.shared(),
-                gui_size: GuiSize {
-                    width: gui::WINDOW_WIDTH,
-                    height: gui::WINDOW_HEIGHT,
-                },
+                gui_size: GuiSize { width, height },
                 gui: TensionFieldGui::default(),
                 automation_drain: AutomationDrainBuffer::default(),
             })
@@ -330,12 +328,20 @@ impl PluginGuiImpl for TensionFieldMainThread<'_> {
     }
 
     fn show(&mut self) -> Result<(), PluginError> {
-        self.gui.open(
+        let result = self.gui.open(
             &self.shared.params,
             Arc::clone(&self.shared.automation_queue),
             Arc::clone(&self.shared.status),
             host_param_requester(self.host),
-        )
+        );
+        if let Some((width, height)) = self.gui.last_size() {
+            self.gui_size = GuiSize { width, height };
+        } else {
+            let (width, height) =
+                gui::preferred_window_size(&self.shared.params, &self.shared.status);
+            self.gui_size = GuiSize { width, height };
+        }
+        result
     }
 
     fn hide(&mut self) -> Result<(), PluginError> {
@@ -344,21 +350,21 @@ impl PluginGuiImpl for TensionFieldMainThread<'_> {
     }
 
     fn get_size(&mut self) -> Option<GuiSize> {
+        if let Some((width, height)) = self.gui.last_size() {
+            self.gui_size = GuiSize { width, height };
+        }
         Some(self.gui_size)
     }
 
     fn can_resize(&mut self) -> bool {
-        false
+        true
     }
 
     fn set_size(&mut self, size: GuiSize) -> Result<(), PluginError> {
-        if size.width == self.gui_size.width && size.height == self.gui_size.height {
-            Ok(())
-        } else {
-            Err(PluginError::Message(
-                "Tension Field editor uses a fixed window size",
-            ))
-        }
+        self.gui_size = size;
+        self.gui
+            .request_resize(size.width.max(1), size.height.max(1));
+        Ok(())
     }
 }
 
