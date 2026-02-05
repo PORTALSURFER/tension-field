@@ -8,7 +8,8 @@ use toybox::clack_plugin::plugin::PluginError;
 use toybox::clack_plugin::utils::ClapId;
 use toybox::clap::automation::{AutomationConfig, AutomationQueue};
 use toybox::clap::gui::GuiHostWindow;
-use toybox::gui::{Color, Point, Rect, Size, Ui, WidgetId};
+use toybox::gui::{Color, Point, Rect, Size};
+use toybox::patchbay_gui::{Ui, WidgetId};
 use toybox::raw_window_handle::HasRawWindowHandle;
 
 use crate::params::{
