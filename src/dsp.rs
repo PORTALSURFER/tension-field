@@ -4,6 +4,29 @@ use std::f32::consts::TAU;
 
 use crate::params::{PullShape, TensionFieldSettings};
 
+/// Per-block metering information exported to the GUI thread.
+#[derive(Debug, Copy, Clone, Default)]
+pub(crate) struct RenderReport {
+    /// Input left activity (0..1).
+    pub input_left: f32,
+    /// Input right activity (0..1).
+    pub input_right: f32,
+    /// Elastic stage activity (0..1).
+    pub elastic_activity: f32,
+    /// Warp stage activity (0..1).
+    pub warp_activity: f32,
+    /// Space stage activity (0..1).
+    pub space_activity: f32,
+    /// Feedback path activity (0..1).
+    pub feedback_activity: f32,
+    /// Output left activity (0..1).
+    pub output_left: f32,
+    /// Output right activity (0..1).
+    pub output_right: f32,
+    /// Tension drive activity (0..1).
+    pub tension_activity: f32,
+}
+
 /// Audio engine implementing the elastic buffer, spectral warp, and space stage.
 pub(crate) struct TensionFieldEngine {
     sample_rate: f32,
@@ -41,24 +64,41 @@ impl TensionFieldEngine {
         settings: &TensionFieldSettings,
         left: &mut [f32],
         right: &mut [f32],
-    ) {
+    ) -> RenderReport {
         let frames = left.len().min(right.len());
         if frames == 0 {
-            return;
+            return RenderReport::default();
         }
 
+        let mut input_left_peak = 0.0_f32;
+        let mut input_right_peak = 0.0_f32;
+        let mut elastic_peak = 0.0_f32;
+        let mut warp_peak = 0.0_f32;
+        let mut space_peak = 0.0_f32;
+        let mut feedback_peak = 0.0_f32;
+        let mut output_left_peak = 0.0_f32;
+        let mut output_right_peak = 0.0_f32;
+        let mut tension_peak = 0.0_f32;
+
         for (l, r) in left.iter_mut().zip(right.iter_mut()).take(frames) {
+            let in_l = *l;
+            let in_r = *r;
+            input_left_peak = input_left_peak.max(in_l.abs());
+            input_right_peak = input_right_peak.max(in_r.abs());
+
             let gesture = self.gesture.next(settings, self.sample_rate);
+            tension_peak = tension_peak.max(gesture.tension_drive);
             let feedback_l = self.feedback_left * settings.feedback;
             let feedback_r = self.feedback_right * settings.feedback;
+            feedback_peak = feedback_peak.max(feedback_l.abs().max(feedback_r.abs()));
 
             let pre_l = self.pre_left.process(
-                *l + feedback_l,
+                in_l + feedback_l,
                 gesture.tension_drive,
                 settings.grain_continuity,
             );
             let pre_r = self.pre_right.process(
-                *r + feedback_r,
+                in_r + feedback_r,
                 gesture.tension_drive,
                 settings.grain_continuity,
             );
@@ -75,6 +115,8 @@ impl TensionFieldEngine {
                     dirty: settings.dirty,
                 },
             );
+            elastic_peak =
+                elastic_peak.max((elastic_l - pre_l).abs().max((elastic_r - pre_r).abs()));
 
             let warp_control = WarpControl {
                 tension: gesture.tension_drive,
@@ -87,6 +129,11 @@ impl TensionFieldEngine {
             };
             let warped_l = self.warp_left.process(elastic_l, warp_control);
             let warped_r = self.warp_right.process(elastic_r, warp_control);
+            warp_peak = warp_peak.max(
+                (warped_l - elastic_l)
+                    .abs()
+                    .max((warped_r - elastic_r).abs()),
+            );
 
             let (space_l, space_r) = self.space.process(
                 warped_l,
@@ -95,13 +142,28 @@ impl TensionFieldEngine {
                 settings.diffusion,
                 settings.dirty,
             );
+            space_peak = space_peak.max((space_l - warped_l).abs().max((space_r - warped_r).abs()));
 
             let out_l = soft_clip(space_l);
             let out_r = soft_clip(space_r);
             *l = out_l;
             *r = out_r;
+            output_left_peak = output_left_peak.max(out_l.abs());
+            output_right_peak = output_right_peak.max(out_r.abs());
             self.feedback_left = out_l;
             self.feedback_right = out_r;
+        }
+
+        RenderReport {
+            input_left: meter_norm(input_left_peak),
+            input_right: meter_norm(input_right_peak),
+            elastic_activity: meter_norm(elastic_peak),
+            warp_activity: meter_norm(warp_peak),
+            space_activity: meter_norm(space_peak),
+            feedback_activity: meter_norm(feedback_peak),
+            output_left: meter_norm(output_left_peak),
+            output_right: meter_norm(output_right_peak),
+            tension_activity: tension_peak.clamp(0.0, 1.0),
         }
     }
 }
@@ -515,6 +577,10 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
 
 fn soft_clip(input: f32) -> f32 {
     input / (1.0 + input.abs() * 0.6)
+}
+
+fn meter_norm(value: f32) -> f32 {
+    (value / (1.0 + value)).clamp(0.0, 1.0)
 }
 
 #[cfg(test)]

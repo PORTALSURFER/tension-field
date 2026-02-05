@@ -34,6 +34,18 @@ Signal flow:
 - `Clean Dirty`: cleaner processing or added texture.
 - `Feedback`: controlled post-warp feedback for sustained textures.
 
+## Editor UI
+
+The plugin includes a fixed-size performance editor (`1280x860`) with:
+
+- Left panel: gesture controls plus four mode cards.
+- Center panel: 2D Tension Map (`Pull Direction` x `Elasticity`) with live trace.
+- Right panel: space/character controls and a macro-first slow mod bank.
+- Bottom strip: detailed meters (input, Elastic, Warp, Space, feedback, output, tension activity).
+
+The current `toybox` GUI backend is Windows-only, so GUI hosting is enabled on
+Windows builds and omitted on non-Windows targets.
+
 ## Build
 
 ```bash

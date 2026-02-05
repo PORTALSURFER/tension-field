@@ -11,5 +11,8 @@ crate-type = ["cdylib"]
 [dependencies]
 toybox = { path = "../toybox" }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+toybox = { path = "../toybox", features = ["gui"] }
+
 [build-dependencies]
 toybox = { path = "../toybox" }

@@ -217,6 +217,113 @@ impl TensionFieldParams {
             feedback: self.feedback.load(),
         }
     }
+
+    /// Read the tension value.
+    #[cfg(target_os = "windows")]
+    pub(crate) fn tension(&self) -> f32 {
+        self.tension.load()
+    }
+
+    /// Read the pull rate in Hertz.
+    #[cfg(target_os = "windows")]
+    pub(crate) fn pull_rate_hz(&self) -> f32 {
+        self.pull_rate_hz.load()
+    }
+
+    /// Read the pull shape as an index in `PULL_SHAPE_LABELS`.
+    #[cfg(target_os = "windows")]
+    pub(crate) fn pull_shape_index(&self) -> usize {
+        PullShape::from_value(self.pull_shape.load()).as_value() as usize
+    }
+
+    /// Read the hold state.
+    #[cfg(target_os = "windows")]
+    pub(crate) fn hold(&self) -> bool {
+        u32_to_bool(self.hold.load(Ordering::Relaxed))
+    }
+
+    /// Read the grain/continuity macro.
+    #[cfg(target_os = "windows")]
+    pub(crate) fn grain_continuity(&self) -> f32 {
+        self.grain_continuity.load()
+    }
+
+    /// Read the pitch coupling amount.
+    #[cfg(target_os = "windows")]
+    pub(crate) fn pitch_coupling(&self) -> f32 {
+        self.pitch_coupling.load()
+    }
+
+    /// Read the width amount.
+    #[cfg(target_os = "windows")]
+    pub(crate) fn width(&self) -> f32 {
+        self.width.load()
+    }
+
+    /// Read the diffusion amount.
+    #[cfg(target_os = "windows")]
+    pub(crate) fn diffusion(&self) -> f32 {
+        self.diffusion.load()
+    }
+
+    /// Read the air damping amount.
+    #[cfg(target_os = "windows")]
+    pub(crate) fn air_damping(&self) -> f32 {
+        self.air_damping.load()
+    }
+
+    /// Read whether air compensation is enabled.
+    #[cfg(target_os = "windows")]
+    pub(crate) fn air_compensation(&self) -> bool {
+        u32_to_bool(self.air_compensation.load(Ordering::Relaxed))
+    }
+
+    /// Read the pull direction value (0..1).
+    #[cfg(target_os = "windows")]
+    pub(crate) fn pull_direction(&self) -> f32 {
+        self.pull_direction.load()
+    }
+
+    /// Read the elasticity value (0..1).
+    #[cfg(target_os = "windows")]
+    pub(crate) fn elasticity(&self) -> f32 {
+        self.elasticity.load()
+    }
+
+    /// Read whether the pull trigger is active.
+    #[cfg(target_os = "windows")]
+    pub(crate) fn pull_trigger(&self) -> bool {
+        u32_to_bool(self.pull_trigger.load(Ordering::Relaxed))
+    }
+
+    /// Read the rebound amount.
+    #[cfg(target_os = "windows")]
+    pub(crate) fn rebound(&self) -> f32 {
+        self.rebound.load()
+    }
+
+    /// Read the clean/dirty control value.
+    #[cfg(target_os = "windows")]
+    pub(crate) fn clean_dirty(&self) -> f32 {
+        self.clean_dirty.load()
+    }
+
+    /// Read the feedback amount.
+    #[cfg(target_os = "windows")]
+    pub(crate) fn feedback(&self) -> f32 {
+        self.feedback.load()
+    }
+}
+
+/// Convert a pull-shape index to an internal shape value.
+#[cfg(target_os = "windows")]
+pub(crate) fn pull_shape_value_from_index(index: usize) -> f32 {
+    match index {
+        1 => PullShape::Rubber.as_value(),
+        2 => PullShape::Ratchet.as_value(),
+        3 => PullShape::Wave.as_value(),
+        _ => PullShape::Linear.as_value(),
+    }
 }
 
 /// Return the number of host-visible parameters.
@@ -321,22 +428,42 @@ pub(crate) fn text_to_value(param_id: ClapId, text: &CStr) -> Option<f64> {
     Some(numeric.clamp(def.min_value, def.max_value))
 }
 
-const PARAM_TENSION_ID: ClapId = ClapId::new(1);
-const PARAM_PULL_RATE_ID: ClapId = ClapId::new(2);
-const PARAM_PULL_SHAPE_ID: ClapId = ClapId::new(3);
-const PARAM_HOLD_ID: ClapId = ClapId::new(4);
-const PARAM_GRAIN_CONTINUITY_ID: ClapId = ClapId::new(5);
-const PARAM_PITCH_COUPLING_ID: ClapId = ClapId::new(6);
-const PARAM_WIDTH_ID: ClapId = ClapId::new(7);
-const PARAM_DIFFUSION_ID: ClapId = ClapId::new(8);
-const PARAM_AIR_DAMPING_ID: ClapId = ClapId::new(9);
-const PARAM_AIR_COMP_ID: ClapId = ClapId::new(10);
-const PARAM_PULL_DIRECTION_ID: ClapId = ClapId::new(11);
-const PARAM_ELASTICITY_ID: ClapId = ClapId::new(12);
-const PARAM_PULL_TRIGGER_ID: ClapId = ClapId::new(13);
-const PARAM_REBOUND_ID: ClapId = ClapId::new(14);
-const PARAM_CLEAN_DIRTY_ID: ClapId = ClapId::new(15);
-const PARAM_FEEDBACK_ID: ClapId = ClapId::new(16);
+/// Parameter id for the Tension macro.
+pub(crate) const PARAM_TENSION_ID: ClapId = ClapId::new(1);
+/// Parameter id for pull rate (Hz).
+pub(crate) const PARAM_PULL_RATE_ID: ClapId = ClapId::new(2);
+/// Parameter id for pull shape selection.
+pub(crate) const PARAM_PULL_SHAPE_ID: ClapId = ClapId::new(3);
+/// Parameter id for hold/suspend.
+pub(crate) const PARAM_HOLD_ID: ClapId = ClapId::new(4);
+/// Parameter id for grain/continuity macro.
+pub(crate) const PARAM_GRAIN_CONTINUITY_ID: ClapId = ClapId::new(5);
+/// Parameter id for pitch coupling amount.
+pub(crate) const PARAM_PITCH_COUPLING_ID: ClapId = ClapId::new(6);
+/// Parameter id for stereo width.
+pub(crate) const PARAM_WIDTH_ID: ClapId = ClapId::new(7);
+/// Parameter id for space diffusion.
+pub(crate) const PARAM_DIFFUSION_ID: ClapId = ClapId::new(8);
+/// Parameter id for air damping amount.
+pub(crate) const PARAM_AIR_DAMPING_ID: ClapId = ClapId::new(9);
+/// Parameter id for air damping compensation toggle.
+pub(crate) const PARAM_AIR_COMP_ID: ClapId = ClapId::new(10);
+/// Parameter id for pull direction (2D map X axis).
+pub(crate) const PARAM_PULL_DIRECTION_ID: ClapId = ClapId::new(11);
+/// Parameter id for elasticity (2D map Y axis).
+pub(crate) const PARAM_ELASTICITY_ID: ClapId = ClapId::new(12);
+/// Parameter id for momentary pull trigger.
+pub(crate) const PARAM_PULL_TRIGGER_ID: ClapId = ClapId::new(13);
+/// Parameter id for release rebound amount.
+pub(crate) const PARAM_REBOUND_ID: ClapId = ClapId::new(14);
+/// Parameter id for clean/dirty character switch.
+pub(crate) const PARAM_CLEAN_DIRTY_ID: ClapId = ClapId::new(15);
+/// Parameter id for controlled feedback amount.
+pub(crate) const PARAM_FEEDBACK_ID: ClapId = ClapId::new(16);
+
+/// Pull-shape labels used by the editor dropdown.
+#[cfg(target_os = "windows")]
+pub(crate) const PULL_SHAPE_LABELS: [&str; 4] = ["Linear", "Rubber", "Ratchet", "Wave"];
 
 #[derive(Copy, Clone)]
 struct ParamDef {
