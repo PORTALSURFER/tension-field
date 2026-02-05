@@ -140,6 +140,7 @@ struct GuiState {
     meter_smooth: [f32; 9],
     mod_bank: ModBank,
     last_frame: Instant,
+    frame_dt: f32,
 }
 
 impl GuiState {
@@ -161,6 +162,7 @@ impl GuiState {
             meter_smooth: [0.0; 9],
             mod_bank: ModBank::default(),
             last_frame: Instant::now(),
+            frame_dt: 1.0 / 60.0,
         }
     }
 
@@ -171,6 +173,12 @@ impl GuiState {
     }
 
     fn build_spec(&mut self) -> UiSpec<'static, GuiState> {
+        let now = Instant::now();
+        let dt = (now - self.last_frame).as_secs_f32().clamp(0.0, 0.1);
+        self.last_frame = now;
+        self.frame_dt = dt;
+        self.apply_modulation(dt);
+
         let header = Node::Widget(WidgetSpec {
             key: "tension-field-header".to_string(),
             size: SizeSpec::Fixed(Size {
@@ -928,10 +936,8 @@ impl GuiState {
             self.status.tension_activity(),
         ];
 
-        let now = Instant::now();
-        let dt = (now - self.last_frame).as_secs_f32().clamp(0.0, 0.1);
-        self.last_frame = now;
-        self.meter_smooth[index] += (values[index] - self.meter_smooth[index]) * (dt * 12.0);
+        self.meter_smooth[index] +=
+            (values[index] - self.meter_smooth[index]) * (self.frame_dt * 12.0);
         let value = self.meter_smooth[index].clamp(0.0, 1.0);
 
         let bar_rect = Rect {
