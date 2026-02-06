@@ -32,7 +32,7 @@ use crate::params::{
     PARAM_PULL_DIRECTION_ID, PARAM_PULL_DIVISION_ID, PARAM_PULL_LATCH_ID, PARAM_PULL_QUANTIZE_ID,
     PARAM_PULL_RATE_ID, PARAM_PULL_SHAPE_ID, PARAM_PULL_TRIGGER_ID, PARAM_REBOUND_ID,
     PARAM_RELEASE_SNAP_ID, PARAM_SWING_ID, PARAM_TENSION_BIAS_ID, PARAM_TENSION_ID,
-    PARAM_TIME_MODE_ID, PARAM_WARP_COLOR_ID, PARAM_WARP_MOTION_ID, PARAM_WIDTH_ID,
+    PARAM_TIME_MODE_ID, PARAM_WARP_COLOR_ID, PARAM_WARP_MOTION_ID, PARAM_WIDTH_ID, PARAM_HOLD_ID,
     PULL_DIVISION_LABELS, PULL_QUANTIZE_LABELS, PULL_SHAPE_LABELS, TIME_MODE_LABELS,
     WARP_COLOR_LABELS, character_mode_value_from_index, mod_rate_mode_value_from_index,
     mod_source_shape_value_from_index, pull_division_value_from_index,
@@ -446,7 +446,8 @@ impl GuiState {
                 height: 24,
             },
             on_interaction: Some(Box::new(move |state: &mut GuiState, event| {
-                if event.response.clicked {
+                // Treat release-inside as a click for compatibility across toybox UI versions.
+                if event.response.released && event.response.hovered {
                     state.active_tab = tab;
                 }
             })),
