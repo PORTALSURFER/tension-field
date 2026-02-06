@@ -10,6 +10,8 @@ use crate::params::{PullDivision, PullQuantize, PullShape, TimeMode};
 pub(crate) struct GestureInput {
     /// Base tension amount.
     pub tension: f32,
+    /// Biases where the strongest cycle pull occurs (early vs late).
+    pub tension_bias: f32,
     /// Free-vs-sync timing mode.
     pub time_mode: TimeMode,
     /// Free-running rate in Hertz.
@@ -28,6 +30,8 @@ pub(crate) struct GestureInput {
     pub pull_quantize: PullQuantize,
     /// Rebound amount controlling release shape.
     pub rebound: f32,
+    /// Sharpness of pull release.
+    pub release_snap: f32,
     /// Direction bias from backward to forward.
     pub pull_direction: f32,
     /// Viscous-to-spring response amount.
@@ -113,6 +117,10 @@ impl GestureEngine {
             }
             TimeMode::SyncDivision => clock.phase_for_division(input.pull_division, input.swing),
         };
+        let anticipation = match input.time_mode {
+            TimeMode::SyncDivision => anticipation_amount(phase, input.tension_bias),
+            TimeMode::FreeHz => 0.0,
+        };
 
         let envelope_target: f32 = if input.pull_latch {
             if self.latched_active { 1.0 } else { 0.0 }
@@ -128,8 +136,9 @@ impl GestureEngine {
         }
 
         let target = envelope_target.max(if one_shot_active { 1.0 } else { 0.0 });
-        let attack = 0.006 + input.elasticity * 0.028;
-        let release = 0.0009 + input.rebound * 0.028;
+        let attack = 0.006 + input.elasticity * 0.028 + anticipation * 0.012;
+        let release =
+            (0.0009 + input.rebound * 0.022 + input.release_snap * 0.05).clamp(0.0009, 0.09);
         let smoothing = if target > self.pull_env {
             attack
         } else {
@@ -142,16 +151,21 @@ impl GestureEngine {
             (self.random_walk + next_signed(&mut self.rng_state) * walk_amount).clamp(-1.0, 1.0);
 
         let shape_value = evaluate_shape(input.pull_shape, phase);
-        let motion = shape_value * (0.3 + self.pull_env * 0.7)
+        let anticipation_push = anticipation * (0.2 + input.tension * 0.45);
+        let motion = (shape_value + anticipation_push * input.pull_direction.signum())
+            * (0.3 + self.pull_env * 0.7)
             + self.random_walk * (0.04 + input.elasticity * 0.1);
 
         let directional = (motion * 0.7 + input.pull_direction * 0.65).clamp(-1.0, 1.0);
-        let velocity = directional - self.previous_direction;
+        let velocity = (directional - self.previous_direction)
+            + anticipation * directional.signum() * (0.01 + input.tension * 0.04);
         self.previous_direction = directional;
 
-        let tension_drive = (input.tension * (0.2 + directional.abs() * 0.8)).clamp(0.0, 1.0);
+        let tension_drive = (input.tension
+            * (0.2 + directional.abs() * 0.72 + anticipation * 0.35))
+            .clamp(0.0, 1.0);
         let center_delay = sample_rate * (0.05 + input.tension * 0.2);
-        let delay_swing = sample_rate * (0.004 + input.elasticity * 0.075);
+        let delay_swing = sample_rate * (0.004 + input.elasticity * 0.075 + anticipation * 0.02);
         let delay_samples = (center_delay + directional * delay_swing).max(12.0);
 
         let drift_phase_inc =
@@ -208,6 +222,15 @@ fn evaluate_shape(shape: PullShape, phase: f32) -> f32 {
     }
 }
 
+fn anticipation_amount(phase: f32, tension_bias: f32) -> f32 {
+    let bias = (tension_bias * 2.0 - 1.0).clamp(-1.0, 1.0);
+    let window = (0.16 + (1.0 - bias.abs()) * 0.1).clamp(0.08, 0.3);
+    let center = (0.88 + bias * 0.08).clamp(0.7, 0.96);
+    let delta = (phase - center).abs();
+    let shaped = 1.0 - (delta / window).clamp(0.0, 1.0);
+    shaped * shaped
+}
+
 fn next_signed(state: &mut u32) -> f32 {
     let mut x = *state;
     x ^= x << 13;
@@ -219,13 +242,14 @@ fn next_signed(state: &mut u32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{GestureEngine, GestureInput, evaluate_shape};
+    use super::{GestureEngine, GestureInput, anticipation_amount, evaluate_shape};
     use crate::clock::ClockFrame;
     use crate::params::{PullDivision, PullQuantize, PullShape, TimeMode};
 
     fn base_input() -> GestureInput {
         GestureInput {
             tension: 0.6,
+            tension_bias: 0.5,
             time_mode: TimeMode::SyncDivision,
             pull_rate_hz: 0.25,
             pull_division: PullDivision::Div1_4,
@@ -235,6 +259,7 @@ mod tests {
             pull_latch: false,
             pull_quantize: PullQuantize::None,
             rebound: 0.5,
+            release_snap: 0.35,
             pull_direction: 0.2,
             elasticity: 0.7,
         }
@@ -284,5 +309,87 @@ mod tests {
         );
 
         assert!(frame.tension_drive > 0.0);
+    }
+
+    #[test]
+    fn anticipation_boosts_velocity_near_cycle_end() {
+        assert!(anticipation_amount(0.98, 1.0) > anticipation_amount(0.2, 1.0));
+
+        let mut engine = GestureEngine::default();
+        let mut input = base_input();
+        input.tension_bias = 1.0;
+        input.pull_trigger = true;
+
+        let early = engine.next(
+            input,
+            48_000.0,
+            ClockFrame {
+                beat_position: 0.1,
+                is_playing: true,
+            },
+        );
+        let near_boundary = engine.next(
+            input,
+            48_000.0,
+            ClockFrame {
+                beat_position: 0.99,
+                is_playing: true,
+            },
+        );
+
+        assert!(near_boundary.tension_drive >= early.tension_drive);
+    }
+
+    #[test]
+    fn release_snap_reduces_hold_after_trigger_release() {
+        let mut no_snap_engine = GestureEngine::default();
+        let mut snap_engine = GestureEngine::default();
+        let mut base = base_input();
+        base.pull_trigger = true;
+
+        let _ = no_snap_engine.next(
+            base,
+            48_000.0,
+            ClockFrame {
+                beat_position: 0.0,
+                is_playing: true,
+            },
+        );
+        let _ = snap_engine.next(
+            GestureInput {
+                release_snap: 1.0,
+                ..base
+            },
+            48_000.0,
+            ClockFrame {
+                beat_position: 0.0,
+                is_playing: true,
+            },
+        );
+
+        base.pull_trigger = false;
+        let mut no_snap = base;
+        no_snap.release_snap = 0.0;
+        let no_snap_frame = no_snap_engine.next(
+            no_snap,
+            48_000.0,
+            ClockFrame {
+                beat_position: 0.1,
+                is_playing: true,
+            },
+        );
+        let snap_frame = snap_engine.next(
+            GestureInput {
+                release_snap: 1.0,
+                ..base
+            },
+            48_000.0,
+            ClockFrame {
+                beat_position: 0.1,
+                is_playing: true,
+            },
+        );
+
+        assert!(snap_frame.tension_drive <= no_snap_frame.tension_drive);
     }
 }

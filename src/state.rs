@@ -2,12 +2,12 @@
 
 use std::io::{Read, Write};
 
-use crate::params::STATE_VALUE_COUNT;
+use crate::params::{STATE_VALUE_COUNT, default_state_values};
 
 /// Four-byte magic marker for Tension Field state payloads (`TFST`).
 pub(crate) const STATE_MAGIC: u32 = u32::from_le_bytes(*b"TFST");
 /// Current state payload version.
-pub(crate) const STATE_VERSION: u32 = 2;
+pub(crate) const STATE_VERSION: u32 = 3;
 /// Number of persisted meter values.
 pub(crate) const METER_COUNT: usize = 9;
 
@@ -82,18 +82,36 @@ pub(crate) fn read_snapshot<R: Read>(
     if magic != STATE_MAGIC {
         return Err(StateDecodeError::InvalidPayload);
     }
-    if version != STATE_VERSION {
-        return Err(StateDecodeError::UnsupportedVersion);
-    }
-    if param_count != STATE_VALUE_COUNT as u32 || meter_count != METER_COUNT as u32 {
+    if meter_count != METER_COUNT as u32 {
         return Err(StateDecodeError::InvalidPayload);
     }
 
-    let mut param_values = [0.0; STATE_VALUE_COUNT];
-    for value in &mut param_values {
-        *value = read_f32(reader)?;
-        if !value.is_finite() {
-            return Err(StateDecodeError::NonFiniteValue);
+    let mut param_values = default_state_values();
+    match version {
+        STATE_VERSION => {
+            if param_count != STATE_VALUE_COUNT as u32 {
+                return Err(StateDecodeError::InvalidPayload);
+            }
+            for value in &mut param_values {
+                *value = read_f32(reader)?;
+                if !value.is_finite() {
+                    return Err(StateDecodeError::NonFiniteValue);
+                }
+            }
+        }
+        2 => {
+            if param_count > STATE_VALUE_COUNT as u32 {
+                return Err(StateDecodeError::InvalidPayload);
+            }
+            for value in param_values.iter_mut().take(param_count as usize) {
+                *value = read_f32(reader)?;
+                if !value.is_finite() {
+                    return Err(StateDecodeError::NonFiniteValue);
+                }
+            }
+        }
+        _ => {
+            return Err(StateDecodeError::UnsupportedVersion);
         }
     }
 
@@ -181,5 +199,33 @@ mod tests {
         let mut cursor = data.as_slice();
         let error = read_snapshot(&mut cursor).expect_err("invalid version must fail");
         assert_eq!(error, StateDecodeError::UnsupportedVersion);
+    }
+
+    #[test]
+    fn v2_snapshot_migrates_missing_param_values() {
+        let legacy_param_count = STATE_VALUE_COUNT as u32 - 3;
+        let mut data = Vec::new();
+        data.extend_from_slice(&STATE_MAGIC.to_le_bytes());
+        data.extend_from_slice(&2u32.to_le_bytes());
+        data.extend_from_slice(&legacy_param_count.to_le_bytes());
+        data.extend_from_slice(&(METER_COUNT as u32).to_le_bytes());
+
+        for index in 0..legacy_param_count {
+            data.extend_from_slice(&((index as f32) * 0.01).to_le_bytes());
+        }
+        for _ in 0..METER_COUNT {
+            data.extend_from_slice(&0.0f32.to_le_bytes());
+        }
+
+        let mut cursor = data.as_slice();
+        let snapshot = read_snapshot(&mut cursor).expect("v2 state should migrate");
+
+        assert!((snapshot.param_values[0] - 0.0).abs() < 1.0e-6);
+        assert!((snapshot.param_values[legacy_param_count as usize - 1] - 0.47).abs() < 1.0e-6);
+        assert!(
+            snapshot.param_values[(legacy_param_count as usize)..]
+                .iter()
+                .all(|value| value.is_finite())
+        );
     }
 }

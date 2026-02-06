@@ -1,4 +1,4 @@
-//! Layout-driven performance UI for the Tension Field plugin.
+//! Tabbed performance UI for the Tension Field plugin.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -9,20 +9,34 @@ use toybox::clack_plugin::utils::ClapId;
 use toybox::clap::automation::{AutomationConfig, AutomationQueue};
 use toybox::clap::gui::GuiHostWindow;
 use toybox::gui::declarative::{
-    Align, ButtonEvent, ButtonSpec, DeclarativeGridSpec, DropdownEvent, DropdownSpec, FlexSpec,
-    KnobEvent, KnobSpec, LabelSpec, Node, Padding, PanelSpec, RegionSpec, RootFrameSpec, SizeSpec,
-    ToggleEvent, ToggleSpec, UiSpec, WidgetSpec, measure,
+    Align, ButtonEvent, ButtonSpec, DropdownEvent, DropdownSpec, FlexSpec, KnobEvent, KnobSpec,
+    LabelSpec, Node, Padding, PanelSpec, RegionSpec, RootFrameSpec, SizeSpec, ToggleEvent,
+    ToggleSpec, UiSpec, WidgetSpec, measure,
 };
 use toybox::gui::{Color, Point, Rect, Size, Theme};
 use toybox::patchbay_gui::Ui;
 use toybox::raw_window_handle::HasRawWindowHandle;
 
 use crate::params::{
-    PARAM_AIR_COMP_ID, PARAM_AIR_DAMPING_ID, PARAM_CLEAN_DIRTY_ID, PARAM_DIFFUSION_ID,
-    PARAM_ELASTICITY_ID, PARAM_FEEDBACK_ID, PARAM_GRAIN_CONTINUITY_ID, PARAM_HOLD_ID,
-    PARAM_PITCH_COUPLING_ID, PARAM_PULL_DIRECTION_ID, PARAM_PULL_RATE_ID, PARAM_PULL_SHAPE_ID,
-    PARAM_PULL_TRIGGER_ID, PARAM_REBOUND_ID, PARAM_TENSION_ID, PARAM_WIDTH_ID, PULL_SHAPE_LABELS,
-    TensionFieldParams, pull_shape_value_from_index,
+    CHARACTER_LABELS, MOD_RATE_MODE_LABELS, MOD_SOURCE_SHAPE_LABELS, PARAM_AIR_COMP_ID,
+    PARAM_AIR_DAMPING_ID, PARAM_CLEAN_DIRTY_ID, PARAM_DIFFUSION_ID, PARAM_DUCKING_ID,
+    PARAM_ELASTICITY_ID, PARAM_ENERGY_CEILING_ID, PARAM_FEEDBACK_ID, PARAM_GRAIN_CONTINUITY_ID,
+    PARAM_MOD_A_DEPTH_ID, PARAM_MOD_A_DIVISION_ID, PARAM_MOD_A_RATE_HZ_ID,
+    PARAM_MOD_A_RATE_MODE_ID, PARAM_MOD_A_SHAPE_ID, PARAM_MOD_A_TO_DIRECTION_ID,
+    PARAM_MOD_A_TO_FEEDBACK_ID, PARAM_MOD_A_TO_GRAIN_ID, PARAM_MOD_A_TO_TENSION_ID,
+    PARAM_MOD_A_TO_WARP_MOTION_ID, PARAM_MOD_A_TO_WIDTH_ID, PARAM_MOD_B_DEPTH_ID,
+    PARAM_MOD_B_DIVISION_ID, PARAM_MOD_B_RATE_HZ_ID, PARAM_MOD_B_RATE_MODE_ID,
+    PARAM_MOD_B_SHAPE_ID, PARAM_MOD_B_TO_DIRECTION_ID, PARAM_MOD_B_TO_FEEDBACK_ID,
+    PARAM_MOD_B_TO_GRAIN_ID, PARAM_MOD_B_TO_TENSION_ID, PARAM_MOD_B_TO_WARP_MOTION_ID,
+    PARAM_MOD_B_TO_WIDTH_ID, PARAM_MOD_RUN_ID, PARAM_OUTPUT_TRIM_DB_ID, PARAM_PITCH_COUPLING_ID,
+    PARAM_PULL_DIRECTION_ID, PARAM_PULL_DIVISION_ID, PARAM_PULL_LATCH_ID, PARAM_PULL_QUANTIZE_ID,
+    PARAM_PULL_RATE_ID, PARAM_PULL_SHAPE_ID, PARAM_PULL_TRIGGER_ID, PARAM_REBOUND_ID,
+    PARAM_RELEASE_SNAP_ID, PARAM_SWING_ID, PARAM_TENSION_BIAS_ID, PARAM_TENSION_ID,
+    PARAM_TIME_MODE_ID, PARAM_WARP_COLOR_ID, PARAM_WARP_MOTION_ID, PARAM_WIDTH_ID,
+    PULL_DIVISION_LABELS, PULL_QUANTIZE_LABELS, PULL_SHAPE_LABELS, TIME_MODE_LABELS,
+    WARP_COLOR_LABELS, character_mode_value_from_index, mod_rate_mode_value_from_index,
+    mod_source_shape_value_from_index, pull_division_value_from_index,
+    pull_quantize_value_from_index, pull_shape_value_from_index, warp_color_value_from_index,
 };
 use crate::{GuiStatus, HostParamRequester};
 
@@ -30,28 +44,31 @@ const ROOT_PADDING_X: i32 = 14;
 const ROOT_PADDING_Y: i32 = 12;
 const PANEL_GAP: i32 = 12;
 const CONTROL_GAP: i32 = 8;
-const BUTTON_WIDTH: u32 = 120;
+const BUTTON_WIDTH: u32 = 124;
 const BUTTON_HEIGHT: u32 = 24;
-const TOGGLE_W: u32 = 58;
+const TOGGLE_W: u32 = 60;
 const TOGGLE_H: u32 = 18;
 const DROPDOWN_W: u32 = 160;
 const DROPDOWN_H: u32 = 22;
-const MAP_WIDTH: u32 = 560;
-const MAP_HEIGHT: u32 = 430;
+const MAP_WIDTH: u32 = 620;
+const MAP_HEIGHT: u32 = 360;
 const METER_CELL_W: u32 = 72;
 const METER_CELL_H: u32 = 96;
 
-const BG: Color = Color::rgb(17, 21, 28);
-const PANEL_BG: Color = Color::rgb(26, 31, 40);
+const BG: Color = Color::rgb(16, 20, 26);
+const PANEL_BG: Color = Color::rgb(25, 30, 39);
 const PANEL_BORDER: Color = Color::rgb(58, 67, 82);
 const TITLE: Color = Color::rgb(220, 225, 236);
 const SUBTITLE: Color = Color::rgb(134, 150, 178);
 const ACCENT: Color = Color::rgb(235, 192, 120);
+const TAB_ACTIVE: Color = Color::rgb(78, 111, 170);
+const TAB_INACTIVE: Color = Color::rgb(43, 51, 66);
 const MAP_LINE: Color = Color::rgb(98, 182, 255);
 const MAP_TRACE: Color = Color::rgba(132, 201, 255, 120);
 const MAP_DOT: Color = Color::rgb(247, 217, 143);
 const METER_FILL: Color = Color::rgb(99, 210, 188);
 const METER_WARN: Color = Color::rgb(228, 148, 112);
+const METER_HOLD: Color = Color::rgb(250, 234, 158);
 
 /// GUI window manager for Tension Field.
 #[derive(Default)]
@@ -74,7 +91,7 @@ impl TensionFieldGui {
     /// Open the plugin editor with shared parameter and metering state.
     pub fn open(
         &mut self,
-        params: &Arc<TensionFieldParams>,
+        params: &Arc<crate::params::TensionFieldParams>,
         automation_queue: Arc<AutomationQueue>,
         status: Arc<GuiStatus>,
         param_requester: Option<HostParamRequester>,
@@ -116,7 +133,7 @@ impl TensionFieldGui {
 
 /// Measure the preferred editor size from the declarative layout.
 pub fn preferred_window_size(
-    params: &Arc<TensionFieldParams>,
+    params: &Arc<crate::params::TensionFieldParams>,
     status: &Arc<GuiStatus>,
 ) -> (u32, u32) {
     let mut state = GuiState::new(
@@ -128,24 +145,191 @@ pub fn preferred_window_size(
     state.measure_window_size()
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum ActiveTab {
+    Perform,
+    Rhythm,
+    Tone,
+    Safety,
+}
+
+impl ActiveTab {
+    fn key(self) -> &'static str {
+        match self {
+            Self::Perform => "perform",
+            Self::Rhythm => "rhythm",
+            Self::Tone => "tone",
+            Self::Safety => "safety",
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            Self::Perform => "Perform",
+            Self::Rhythm => "Rhythm",
+            Self::Tone => "Tone + Mod",
+            Self::Safety => "Safety + Out",
+        }
+    }
+
+    fn all() -> [Self; 4] {
+        [Self::Perform, Self::Rhythm, Self::Tone, Self::Safety]
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum TensionPreset {
+    PulseDrive,
+    RatchetPressure,
+    PreDropCoil,
+    ElasticSurge,
+    ForwardStrain,
+    TripletAnxiety,
+    GhostLift,
+    CrushSqueeze,
+    WidePanic,
+    AftershockTail,
+}
+
+impl TensionPreset {
+    fn all() -> [Self; 10] {
+        [
+            Self::PulseDrive,
+            Self::RatchetPressure,
+            Self::PreDropCoil,
+            Self::ElasticSurge,
+            Self::ForwardStrain,
+            Self::TripletAnxiety,
+            Self::GhostLift,
+            Self::CrushSqueeze,
+            Self::WidePanic,
+            Self::AftershockTail,
+        ]
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::PulseDrive => "Pulse Drive",
+            Self::RatchetPressure => "Ratchet Pressure",
+            Self::PreDropCoil => "Pre-Drop Coil",
+            Self::ElasticSurge => "Elastic Surge",
+            Self::ForwardStrain => "Forward Strain",
+            Self::TripletAnxiety => "Triplet Anxiety",
+            Self::GhostLift => "Ghost Lift",
+            Self::CrushSqueeze => "Crush Squeeze",
+            Self::WidePanic => "Wide Panic",
+            Self::AftershockTail => "Aftershock Tail",
+        }
+    }
+
+    fn updates(self) -> &'static [(ClapId, f32)] {
+        match self {
+            Self::PulseDrive => &[
+                (PARAM_TENSION_ID, 0.74),
+                (PARAM_PULL_SHAPE_ID, 4.0),
+                (PARAM_PULL_DIVISION_ID, 4.0),
+                (PARAM_PULL_QUANTIZE_ID, 1.0),
+                (PARAM_TENSION_BIAS_ID, 0.75),
+                (PARAM_RELEASE_SNAP_ID, 0.62),
+                (PARAM_WARP_MOTION_ID, 0.56),
+                (PARAM_FEEDBACK_ID, 0.26),
+            ],
+            Self::RatchetPressure => &[
+                (PARAM_TENSION_ID, 0.67),
+                (PARAM_PULL_SHAPE_ID, 2.0),
+                (PARAM_PULL_DIVISION_ID, 2.0),
+                (PARAM_TENSION_BIAS_ID, 0.64),
+                (PARAM_GRAIN_CONTINUITY_ID, 0.54),
+                (PARAM_WARP_MOTION_ID, 0.58),
+                (PARAM_CLEAN_DIRTY_ID, 1.0),
+            ],
+            Self::PreDropCoil => &[
+                (PARAM_TENSION_ID, 0.78),
+                (PARAM_PULL_DIVISION_ID, 6.0),
+                (PARAM_PULL_LATCH_ID, 1.0),
+                (PARAM_TENSION_BIAS_ID, 0.82),
+                (PARAM_RELEASE_SNAP_ID, 0.74),
+                (PARAM_FEEDBACK_ID, 0.34),
+                (PARAM_DUCKING_ID, 0.32),
+            ],
+            Self::ElasticSurge => &[
+                (PARAM_TENSION_ID, 0.72),
+                (PARAM_PULL_DIVISION_ID, 5.0),
+                (PARAM_SWING_ID, 0.18),
+                (PARAM_ELASTICITY_ID, 0.82),
+                (PARAM_WARP_MOTION_ID, 0.51),
+                (PARAM_DIFFUSION_ID, 0.64),
+            ],
+            Self::ForwardStrain => &[
+                (PARAM_TENSION_ID, 0.7),
+                (PARAM_PULL_DIRECTION_ID, 0.84),
+                (PARAM_TENSION_BIAS_ID, 0.69),
+                (PARAM_PULL_QUANTIZE_ID, 2.0),
+                (PARAM_RELEASE_SNAP_ID, 0.58),
+                (PARAM_WARP_COLOR_ID, 1.0),
+            ],
+            Self::TripletAnxiety => &[
+                (PARAM_TENSION_ID, 0.65),
+                (PARAM_PULL_DIVISION_ID, 3.0),
+                (PARAM_PULL_QUANTIZE_ID, 1.0),
+                (PARAM_SWING_ID, 0.22),
+                (PARAM_TENSION_BIAS_ID, 0.6),
+                (PARAM_WARP_MOTION_ID, 0.61),
+            ],
+            Self::GhostLift => &[
+                (PARAM_TENSION_ID, 0.52),
+                (PARAM_PULL_SHAPE_ID, 0.0),
+                (PARAM_PULL_DIVISION_ID, 4.0),
+                (PARAM_RELEASE_SNAP_ID, 0.44),
+                (PARAM_DIFFUSION_ID, 0.66),
+                (PARAM_WIDTH_ID, 0.75),
+            ],
+            Self::CrushSqueeze => &[
+                (PARAM_TENSION_ID, 0.73),
+                (PARAM_CLEAN_DIRTY_ID, 2.0),
+                (PARAM_GRAIN_CONTINUITY_ID, 0.57),
+                (PARAM_WARP_MOTION_ID, 0.67),
+                (PARAM_FEEDBACK_ID, 0.22),
+                (PARAM_ENERGY_CEILING_ID, 0.52),
+            ],
+            Self::WidePanic => &[
+                (PARAM_TENSION_ID, 0.64),
+                (PARAM_WIDTH_ID, 0.9),
+                (PARAM_DIFFUSION_ID, 0.74),
+                (PARAM_PULL_DIVISION_ID, 2.0),
+                (PARAM_TENSION_BIAS_ID, 0.58),
+                (PARAM_FEEDBACK_ID, 0.18),
+            ],
+            Self::AftershockTail => &[
+                (PARAM_TENSION_ID, 0.68),
+                (PARAM_PULL_LATCH_ID, 1.0),
+                (PARAM_PULL_DIVISION_ID, 5.0),
+                (PARAM_FEEDBACK_ID, 0.41),
+                (PARAM_DUCKING_ID, 0.38),
+                (PARAM_ENERGY_CEILING_ID, 0.66),
+            ],
+        }
+    }
+}
+
 struct GuiState {
-    params: Arc<TensionFieldParams>,
+    params: Arc<crate::params::TensionFieldParams>,
     automation_queue: Arc<AutomationQueue>,
     automation_config: AutomationConfig,
     status: Arc<GuiStatus>,
     param_requester: Option<HostParamRequester>,
+    active_tab: ActiveTab,
     map_dragging: bool,
     map_trace: Vec<Point>,
-    active_mode: ModeCard,
     meter_smooth: [f32; 9],
-    mod_bank: ModBank,
+    meter_peak_hold: [f32; 9],
     last_frame: Instant,
     frame_dt: f32,
 }
 
 impl GuiState {
     fn new(
-        params: Arc<TensionFieldParams>,
+        params: Arc<crate::params::TensionFieldParams>,
         automation_queue: Arc<AutomationQueue>,
         status: Arc<GuiStatus>,
         param_requester: Option<HostParamRequester>,
@@ -156,11 +340,11 @@ impl GuiState {
             automation_config: AutomationConfig::default(),
             status,
             param_requester,
+            active_tab: ActiveTab::Perform,
             map_dragging: false,
             map_trace: Vec::with_capacity(48),
-            active_mode: ModeCard::TapeTugPad,
             meter_smooth: [0.0; 9],
-            mod_bank: ModBank::default(),
+            meter_peak_hold: [0.0; 9],
             last_frame: Instant::now(),
             frame_dt: 1.0 / 60.0,
         }
@@ -174,18 +358,16 @@ impl GuiState {
 
     fn build_spec(&mut self) -> UiSpec<'static, GuiState> {
         let now = Instant::now();
-        let dt = (now - self.last_frame).as_secs_f32().clamp(0.0, 0.1);
+        self.frame_dt = (now - self.last_frame).as_secs_f32().clamp(0.0, 0.1);
         self.last_frame = now;
-        self.frame_dt = dt;
-        self.apply_modulation(dt);
 
         let header = Node::Widget(WidgetSpec {
             key: "tension-field-header".to_string(),
             size: SizeSpec::Fixed(Size {
-                width: 420,
+                width: 460,
                 height: 24,
             }),
-            render: Box::new(|ui, rect, _state: &mut GuiState| {
+            render: Box::new(|ui, rect, state: &mut GuiState| {
                 ui.canvas().fill_rect(rect, BG);
                 ui.text_with_color(rect.origin, "TENSION FIELD", TITLE);
                 ui.text_with_color(
@@ -193,23 +375,27 @@ impl GuiState {
                         x: rect.origin.x + 190,
                         y: rect.origin.y,
                     },
-                    "elastic time warp",
+                    "rhythmic strain engine",
                     SUBTITLE,
+                );
+                ui.text_with_color(
+                    Point {
+                        x: rect.origin.x + 370,
+                        y: rect.origin.y,
+                    },
+                    state.active_tab.title(),
+                    ACCENT,
                 );
             }),
         });
 
-        let main_row = Node::Row(FlexSpec {
-            size: SizeSpec::Auto,
-            gap: PANEL_GAP,
-            padding: Padding::default(),
-            align: Align::Start,
-            children: vec![
-                self.build_gesture_panel(),
-                self.build_map_panel(),
-                self.build_space_mod_panel(),
-            ],
-        });
+        let tabs = self.build_tab_row();
+        let main_content = match self.active_tab {
+            ActiveTab::Perform => self.build_perform_tab(),
+            ActiveTab::Rhythm => self.build_rhythm_tab(),
+            ActiveTab::Tone => self.build_tone_tab(),
+            ActiveTab::Safety => self.build_safety_tab(),
+        };
 
         let meter_panel = self.build_meter_panel();
 
@@ -231,17 +417,69 @@ impl GuiState {
                         gap: PANEL_GAP,
                         padding: Padding::symmetric(ROOT_PADDING_X, ROOT_PADDING_Y),
                         align: Align::Start,
-                        children: vec![header, main_row, meter_panel],
+                        children: vec![header, tabs, main_content, meter_panel],
                     })),
                 })),
             },
         }
     }
 
-    fn build_gesture_panel(&self) -> Node<'static, GuiState> {
+    fn build_tab_row(&self) -> Node<'static, GuiState> {
+        let mut children = Vec::with_capacity(ActiveTab::all().len());
+        for tab in ActiveTab::all() {
+            children.push(self.tab_button(tab));
+        }
+        Node::Row(FlexSpec {
+            size: SizeSpec::Auto,
+            gap: CONTROL_GAP,
+            padding: Padding::default(),
+            align: Align::Start,
+            children,
+        })
+    }
+
+    fn tab_button(&self, tab: ActiveTab) -> Node<'static, GuiState> {
+        Node::Region(RegionSpec {
+            key: format!("tab-{}", tab.key()),
+            size: Size {
+                width: 120,
+                height: 24,
+            },
+            on_interaction: Some(Box::new(move |state: &mut GuiState, event| {
+                if event.response.clicked {
+                    state.active_tab = tab;
+                }
+            })),
+            draw: Some(Box::new(
+                move |canvas, rect, state: &mut GuiState, response| {
+                    let active = state.active_tab == tab;
+                    let fill = if active {
+                        TAB_ACTIVE
+                    } else if response.hovered {
+                        Color::rgb(60, 72, 90)
+                    } else {
+                        TAB_INACTIVE
+                    };
+                    canvas.fill_rect(rect, fill);
+                    canvas.stroke_rect(rect, 1, PANEL_BORDER);
+                    canvas.draw_text(
+                        Point {
+                            x: rect.origin.x + 14,
+                            y: rect.origin.y + 8,
+                        },
+                        tab.title(),
+                        if active { BG } else { TITLE },
+                        1,
+                    );
+                },
+            )),
+        })
+    }
+
+    fn build_perform_tab(&self) -> Node<'static, GuiState> {
         Node::Panel(PanelSpec {
-            key: "gesture-panel".to_string(),
-            title: Some("Gesture".to_string()),
+            key: "perform-tab".to_string(),
+            title: Some("Perform".to_string()),
             padding: 10,
             background: Some(PANEL_BG),
             outline: Some(PANEL_BORDER),
@@ -263,76 +501,39 @@ impl GuiState {
                                 "tension",
                                 "Tension",
                                 PARAM_TENSION_ID,
-                                self.params.tension(),
+                                self.param_value(PARAM_TENSION_ID, 0.5),
+                                (0.0, 1.0),
+                                "%",
+                            ),
+                            self.param_knob(
+                                "tension-bias",
+                                "Tension Bias",
+                                PARAM_TENSION_BIAS_ID,
+                                self.param_value(PARAM_TENSION_BIAS_ID, 0.5),
                                 (0.0, 1.0),
                                 "%",
                             ),
                             self.pull_button(),
-                        ],
-                    }),
-                    Node::Row(FlexSpec {
-                        size: SizeSpec::Auto,
-                        gap: CONTROL_GAP,
-                        padding: Padding::default(),
-                        align: Align::Start,
-                        children: vec![
-                            self.param_toggle("hold", "Hold", PARAM_HOLD_ID, self.params.hold()),
-                            self.pull_shape_dropdown(),
-                        ],
-                    }),
-                    Node::Row(FlexSpec {
-                        size: SizeSpec::Auto,
-                        gap: CONTROL_GAP,
-                        padding: Padding::default(),
-                        align: Align::Start,
-                        children: vec![
-                            self.param_knob(
-                                "pull-rate",
-                                "Pull Rate",
-                                PARAM_PULL_RATE_ID,
-                                self.params.pull_rate_hz(),
-                                (0.02, 2.0),
-                                "Hz",
+                            self.param_toggle(
+                                "pull-latch",
+                                "Latch",
+                                PARAM_PULL_LATCH_ID,
+                                self.param_bool(PARAM_PULL_LATCH_ID, false),
                             ),
-                            self.param_knob(
-                                "rebound",
-                                "Rebound",
-                                PARAM_REBOUND_ID,
-                                self.params.rebound(),
-                                (0.0, 1.0),
-                                "%",
+                            self.param_dropdown(
+                                "pull-quant",
+                                "Quant",
+                                PARAM_PULL_QUANTIZE_ID,
+                                PULL_QUANTIZE_LABELS
+                                    .iter()
+                                    .map(|v| (*v).to_string())
+                                    .collect(),
+                                self.param_value(PARAM_PULL_QUANTIZE_ID, 1.0).round() as usize,
+                                pull_quantize_value_from_index,
                             ),
                         ],
                     }),
-                    Node::Label(LabelSpec {
-                        text: "Modes".to_string(),
-                        size: SizeSpec::Auto,
-                        color: Some(SUBTITLE),
-                    }),
-                    self.mode_button(ModeCard::TapeTugPad),
-                    self.mode_button(ModeCard::ElasticDroneMaker),
-                    self.mode_button(ModeCard::RatchetAtmos),
-                    self.mode_button(ModeCard::GhostPercTail),
-                ],
-            })),
-        })
-    }
-
-    fn build_map_panel(&self) -> Node<'static, GuiState> {
-        Node::Panel(PanelSpec {
-            key: "map-panel".to_string(),
-            title: Some("Tension Map".to_string()),
-            padding: 10,
-            background: Some(PANEL_BG),
-            outline: Some(PANEL_BORDER),
-            header_height: None,
-            size: SizeSpec::Auto,
-            content: Box::new(Node::Column(FlexSpec {
-                size: SizeSpec::Auto,
-                gap: CONTROL_GAP,
-                padding: Padding::default(),
-                align: Align::Start,
-                children: vec![
+                    self.quantize_indicator(),
                     Node::Widget(WidgetSpec {
                         key: "tension-map-widget".to_string(),
                         size: SizeSpec::Fixed(Size {
@@ -350,42 +551,43 @@ impl GuiState {
                         align: Align::Start,
                         children: vec![
                             self.param_knob(
-                                "grain",
-                                "Grain",
-                                PARAM_GRAIN_CONTINUITY_ID,
-                                self.params.grain_continuity(),
+                                "direction",
+                                "Direction",
+                                PARAM_PULL_DIRECTION_ID,
+                                self.param_value(PARAM_PULL_DIRECTION_ID, 0.5),
                                 (0.0, 1.0),
                                 "%",
                             ),
                             self.param_knob(
-                                "pitch-coupling",
-                                "Pitch Coupling",
-                                PARAM_PITCH_COUPLING_ID,
-                                self.params.pitch_coupling(),
+                                "elasticity",
+                                "Elasticity",
+                                PARAM_ELASTICITY_ID,
+                                self.param_value(PARAM_ELASTICITY_ID, 0.65),
                                 (0.0, 1.0),
                                 "%",
                             ),
-                            self.param_knob(
-                                "feedback",
-                                "Feedback",
-                                PARAM_FEEDBACK_ID,
-                                self.params.feedback(),
-                                (0.0, 0.6),
-                                "%",
+                            self.param_dropdown(
+                                "pull-shape",
+                                "Pull Shape",
+                                PARAM_PULL_SHAPE_ID,
+                                PULL_SHAPE_LABELS.iter().map(|v| (*v).to_string()).collect(),
+                                self.param_value(PARAM_PULL_SHAPE_ID, 1.0).round() as usize,
+                                pull_shape_value_from_index,
                             ),
                         ],
                     }),
+                    self.build_preset_bank(),
                 ],
             })),
         })
     }
 
-    fn build_space_mod_panel(&self) -> Node<'static, GuiState> {
-        let mod_panel = Node::Panel(PanelSpec {
-            key: "mod-panel".to_string(),
-            title: Some("Slow Mod Bank".to_string()),
-            padding: 8,
-            background: Some(Color::rgb(21, 26, 34)),
+    fn build_rhythm_tab(&self) -> Node<'static, GuiState> {
+        Node::Panel(PanelSpec {
+            key: "rhythm-tab".to_string(),
+            title: Some("Rhythm".to_string()),
+            padding: 10,
+            background: Some(PANEL_BG),
             outline: Some(PANEL_BORDER),
             header_height: None,
             size: SizeSpec::Auto,
@@ -395,34 +597,113 @@ impl GuiState {
                 padding: Padding::default(),
                 align: Align::Start,
                 children: vec![
-                    self.mod_run_toggle(),
-                    self.mod_row(
-                        "A",
-                        ModParam::LfoARate,
-                        ModParam::LfoADepth,
-                        Some(ModParam::LfoADrift),
-                    ),
-                    self.mod_row(
-                        "B",
-                        ModParam::LfoBRate,
-                        ModParam::LfoBDepth,
-                        Some(ModParam::LfoBDrift),
-                    ),
-                    self.mod_row("R", ModParam::WalkRate, ModParam::WalkDepth, None),
-                    self.mod_row("E", ModParam::EnvSensitivity, ModParam::EnvDepth, None),
-                    Node::Label(LabelSpec {
-                        text: "Routes: Ten Dir Grn Wid".to_string(),
+                    Node::Row(FlexSpec {
                         size: SizeSpec::Auto,
-                        color: Some(SUBTITLE),
+                        gap: CONTROL_GAP,
+                        padding: Padding::default(),
+                        align: Align::Start,
+                        children: vec![
+                            self.param_dropdown(
+                                "time-mode",
+                                "Time Mode",
+                                PARAM_TIME_MODE_ID,
+                                TIME_MODE_LABELS.iter().map(|v| (*v).to_string()).collect(),
+                                self.param_value(PARAM_TIME_MODE_ID, 1.0).round() as usize,
+                                |index| index.min(1) as f32,
+                            ),
+                            self.param_dropdown(
+                                "pull-division",
+                                "Pull Division",
+                                PARAM_PULL_DIVISION_ID,
+                                PULL_DIVISION_LABELS
+                                    .iter()
+                                    .map(|v| (*v).to_string())
+                                    .collect(),
+                                self.param_value(PARAM_PULL_DIVISION_ID, 4.0).round() as usize,
+                                pull_division_value_from_index,
+                            ),
+                            self.param_knob(
+                                "pull-rate",
+                                "Pull Rate",
+                                PARAM_PULL_RATE_ID,
+                                self.param_value(PARAM_PULL_RATE_ID, 0.35),
+                                (0.02, 4.0),
+                                "Hz",
+                            ),
+                        ],
                     }),
-                    self.mod_routes_grid(),
+                    Node::Row(FlexSpec {
+                        size: SizeSpec::Auto,
+                        gap: CONTROL_GAP,
+                        padding: Padding::default(),
+                        align: Align::Start,
+                        children: vec![
+                            self.param_knob(
+                                "swing",
+                                "Swing",
+                                PARAM_SWING_ID,
+                                self.param_value(PARAM_SWING_ID, 0.0),
+                                (0.0, 1.0),
+                                "%",
+                            ),
+                            self.param_knob(
+                                "rebound",
+                                "Rebound",
+                                PARAM_REBOUND_ID,
+                                self.param_value(PARAM_REBOUND_ID, 0.55),
+                                (0.0, 1.0),
+                                "%",
+                            ),
+                            self.param_knob(
+                                "release-snap",
+                                "Release Snap",
+                                PARAM_RELEASE_SNAP_ID,
+                                self.param_value(PARAM_RELEASE_SNAP_ID, 0.35),
+                                (0.0, 1.0),
+                                "%",
+                            ),
+                        ],
+                    }),
+                    Node::Row(FlexSpec {
+                        size: SizeSpec::Auto,
+                        gap: CONTROL_GAP,
+                        padding: Padding::default(),
+                        align: Align::Start,
+                        children: vec![
+                            self.param_toggle(
+                                "hold",
+                                "Hold",
+                                PARAM_HOLD_ID,
+                                self.param_bool(PARAM_HOLD_ID, false),
+                            ),
+                            self.param_toggle(
+                                "pull-latch-r",
+                                "Pull Latch",
+                                PARAM_PULL_LATCH_ID,
+                                self.param_bool(PARAM_PULL_LATCH_ID, false),
+                            ),
+                            self.param_dropdown(
+                                "pull-quant-r",
+                                "Pull Quant",
+                                PARAM_PULL_QUANTIZE_ID,
+                                PULL_QUANTIZE_LABELS
+                                    .iter()
+                                    .map(|v| (*v).to_string())
+                                    .collect(),
+                                self.param_value(PARAM_PULL_QUANTIZE_ID, 1.0).round() as usize,
+                                pull_quantize_value_from_index,
+                            ),
+                        ],
+                    }),
                 ],
             })),
-        });
+        })
+    }
 
+    fn build_tone_tab(&self) -> Node<'static, GuiState> {
         Node::Panel(PanelSpec {
-            key: "space-panel".to_string(),
-            title: Some("Space / Mod".to_string()),
+            key: "tone-tab".to_string(),
+            title: Some("Tone + Mod".to_string()),
             padding: 10,
             background: Some(PANEL_BG),
             outline: Some(PANEL_BORDER),
@@ -441,20 +722,44 @@ impl GuiState {
                         align: Align::Start,
                         children: vec![
                             self.param_knob(
-                                "width",
-                                "Width",
-                                PARAM_WIDTH_ID,
-                                self.params.width(),
+                                "grain",
+                                "Grain",
+                                PARAM_GRAIN_CONTINUITY_ID,
+                                self.param_value(PARAM_GRAIN_CONTINUITY_ID, 0.28),
                                 (0.0, 1.0),
                                 "%",
                             ),
                             self.param_knob(
-                                "diffusion",
-                                "Diffusion",
-                                PARAM_DIFFUSION_ID,
-                                self.params.diffusion(),
+                                "pitch-coupling",
+                                "Pitch Coupling",
+                                PARAM_PITCH_COUPLING_ID,
+                                self.param_value(PARAM_PITCH_COUPLING_ID, 0.2),
                                 (0.0, 1.0),
                                 "%",
+                            ),
+                            self.param_knob(
+                                "warp-motion",
+                                "Warp Motion",
+                                PARAM_WARP_MOTION_ID,
+                                self.param_value(PARAM_WARP_MOTION_ID, 0.35),
+                                (0.0, 1.0),
+                                "%",
+                            ),
+                            self.param_dropdown(
+                                "warp-color",
+                                "Warp Color",
+                                PARAM_WARP_COLOR_ID,
+                                WARP_COLOR_LABELS.iter().map(|v| (*v).to_string()).collect(),
+                                self.param_value(PARAM_WARP_COLOR_ID, 0.0).round() as usize,
+                                warp_color_value_from_index,
+                            ),
+                            self.param_dropdown(
+                                "character",
+                                "Character",
+                                PARAM_CLEAN_DIRTY_ID,
+                                CHARACTER_LABELS.iter().map(|v| (*v).to_string()).collect(),
+                                self.param_value(PARAM_CLEAN_DIRTY_ID, 0.0).round() as usize,
+                                character_mode_value_from_index,
                             ),
                         ],
                     }),
@@ -465,10 +770,26 @@ impl GuiState {
                         align: Align::Start,
                         children: vec![
                             self.param_knob(
+                                "width",
+                                "Width",
+                                PARAM_WIDTH_ID,
+                                self.param_value(PARAM_WIDTH_ID, 0.6),
+                                (0.0, 1.0),
+                                "%",
+                            ),
+                            self.param_knob(
+                                "diffusion",
+                                "Diffusion",
+                                PARAM_DIFFUSION_ID,
+                                self.param_value(PARAM_DIFFUSION_ID, 0.55),
+                                (0.0, 1.0),
+                                "%",
+                            ),
+                            self.param_knob(
                                 "air-damping",
                                 "Air Damping",
                                 PARAM_AIR_DAMPING_ID,
-                                self.params.air_damping(),
+                                self.param_value(PARAM_AIR_DAMPING_ID, 0.35),
                                 (0.0, 1.0),
                                 "%",
                             ),
@@ -476,19 +797,351 @@ impl GuiState {
                                 "air-comp",
                                 "Air Comp",
                                 PARAM_AIR_COMP_ID,
-                                self.params.air_compensation(),
-                            ),
-                            self.param_toggle(
-                                "clean-dirty",
-                                "Dirty",
-                                PARAM_CLEAN_DIRTY_ID,
-                                self.params.clean_dirty() >= 0.5,
+                                self.param_bool(PARAM_AIR_COMP_ID, true),
                             ),
                         ],
                     }),
-                    mod_panel,
+                    self.build_mod_matrix_panel(),
                 ],
             })),
+        })
+    }
+
+    fn build_safety_tab(&self) -> Node<'static, GuiState> {
+        Node::Panel(PanelSpec {
+            key: "safety-tab".to_string(),
+            title: Some("Safety + Output".to_string()),
+            padding: 10,
+            background: Some(PANEL_BG),
+            outline: Some(PANEL_BORDER),
+            header_height: None,
+            size: SizeSpec::Auto,
+            content: Box::new(Node::Column(FlexSpec {
+                size: SizeSpec::Auto,
+                gap: CONTROL_GAP,
+                padding: Padding::default(),
+                align: Align::Start,
+                children: vec![
+                    Node::Row(FlexSpec {
+                        size: SizeSpec::Auto,
+                        gap: CONTROL_GAP,
+                        padding: Padding::default(),
+                        align: Align::Start,
+                        children: vec![
+                            self.param_knob(
+                                "feedback",
+                                "Feedback",
+                                PARAM_FEEDBACK_ID,
+                                self.param_value(PARAM_FEEDBACK_ID, 0.12),
+                                (0.0, 0.7),
+                                "%",
+                            ),
+                            self.param_knob(
+                                "ducking",
+                                "Ducking",
+                                PARAM_DUCKING_ID,
+                                self.param_value(PARAM_DUCKING_ID, 0.0),
+                                (0.0, 1.0),
+                                "%",
+                            ),
+                            self.param_knob(
+                                "energy-ceiling",
+                                "Energy Ceiling",
+                                PARAM_ENERGY_CEILING_ID,
+                                self.param_value(PARAM_ENERGY_CEILING_ID, 0.7),
+                                (0.0, 1.0),
+                                "%",
+                            ),
+                            self.param_knob(
+                                "output-trim",
+                                "Output Trim",
+                                PARAM_OUTPUT_TRIM_DB_ID,
+                                self.param_value(PARAM_OUTPUT_TRIM_DB_ID, 0.0),
+                                (-12.0, 6.0),
+                                "dB",
+                            ),
+                        ],
+                    }),
+                    Node::Label(LabelSpec {
+                        text: "Safety ceilings are always active; lower Energy Ceiling for stricter containment."
+                            .to_string(),
+                        size: SizeSpec::Auto,
+                        color: Some(SUBTITLE),
+                    }),
+                ],
+            })),
+        })
+    }
+
+    fn build_mod_matrix_panel(&self) -> Node<'static, GuiState> {
+        Node::Panel(PanelSpec {
+            key: "mod-matrix-panel".to_string(),
+            title: Some("DSP Mod Matrix".to_string()),
+            padding: 8,
+            background: Some(Color::rgb(21, 26, 34)),
+            outline: Some(PANEL_BORDER),
+            header_height: None,
+            size: SizeSpec::Auto,
+            content: Box::new(Node::Column(FlexSpec {
+                size: SizeSpec::Auto,
+                gap: CONTROL_GAP,
+                padding: Padding::default(),
+                align: Align::Start,
+                children: vec![
+                    self.param_toggle(
+                        "mod-run",
+                        "Run",
+                        PARAM_MOD_RUN_ID,
+                        self.param_bool(PARAM_MOD_RUN_ID, true),
+                    ),
+                    self.mod_source_row(
+                        "A",
+                        PARAM_MOD_A_SHAPE_ID,
+                        PARAM_MOD_A_RATE_MODE_ID,
+                        PARAM_MOD_A_RATE_HZ_ID,
+                        PARAM_MOD_A_DIVISION_ID,
+                        PARAM_MOD_A_DEPTH_ID,
+                    ),
+                    self.mod_source_row(
+                        "B",
+                        PARAM_MOD_B_SHAPE_ID,
+                        PARAM_MOD_B_RATE_MODE_ID,
+                        PARAM_MOD_B_RATE_HZ_ID,
+                        PARAM_MOD_B_DIVISION_ID,
+                        PARAM_MOD_B_DEPTH_ID,
+                    ),
+                    Node::Label(LabelSpec {
+                        text: "Routes (A/B): Tension Direction Grain Width Warp Feedback"
+                            .to_string(),
+                        size: SizeSpec::Auto,
+                        color: Some(SUBTITLE),
+                    }),
+                    self.mod_routes_row(
+                        "A",
+                        [
+                            PARAM_MOD_A_TO_TENSION_ID,
+                            PARAM_MOD_A_TO_DIRECTION_ID,
+                            PARAM_MOD_A_TO_GRAIN_ID,
+                            PARAM_MOD_A_TO_WIDTH_ID,
+                            PARAM_MOD_A_TO_WARP_MOTION_ID,
+                            PARAM_MOD_A_TO_FEEDBACK_ID,
+                        ],
+                    ),
+                    self.mod_routes_row(
+                        "B",
+                        [
+                            PARAM_MOD_B_TO_TENSION_ID,
+                            PARAM_MOD_B_TO_DIRECTION_ID,
+                            PARAM_MOD_B_TO_GRAIN_ID,
+                            PARAM_MOD_B_TO_WIDTH_ID,
+                            PARAM_MOD_B_TO_WARP_MOTION_ID,
+                            PARAM_MOD_B_TO_FEEDBACK_ID,
+                        ],
+                    ),
+                ],
+            })),
+        })
+    }
+
+    fn mod_source_row(
+        &self,
+        label: &'static str,
+        shape_id: ClapId,
+        rate_mode_id: ClapId,
+        rate_hz_id: ClapId,
+        division_id: ClapId,
+        depth_id: ClapId,
+    ) -> Node<'static, GuiState> {
+        Node::Row(FlexSpec {
+            size: SizeSpec::Auto,
+            gap: CONTROL_GAP,
+            padding: Padding::default(),
+            align: Align::Start,
+            children: vec![
+                Node::Label(LabelSpec {
+                    text: label.to_string(),
+                    size: SizeSpec::Auto,
+                    color: Some(TITLE),
+                }),
+                self.param_dropdown(
+                    format!("mod-{label}-shape"),
+                    "Shape",
+                    shape_id,
+                    MOD_SOURCE_SHAPE_LABELS
+                        .iter()
+                        .map(|v| (*v).to_string())
+                        .collect(),
+                    self.param_value(shape_id, 0.0).round() as usize,
+                    mod_source_shape_value_from_index,
+                ),
+                self.param_dropdown(
+                    format!("mod-{label}-rate-mode"),
+                    "Rate Mode",
+                    rate_mode_id,
+                    MOD_RATE_MODE_LABELS
+                        .iter()
+                        .map(|v| (*v).to_string())
+                        .collect(),
+                    self.param_value(rate_mode_id, 1.0).round() as usize,
+                    mod_rate_mode_value_from_index,
+                ),
+                self.param_knob(
+                    format!("mod-{label}-rate-hz"),
+                    "Rate Hz",
+                    rate_hz_id,
+                    self.param_value(rate_hz_id, 0.1),
+                    (0.01, 4.0),
+                    "Hz",
+                ),
+                self.param_dropdown(
+                    format!("mod-{label}-division"),
+                    "Division",
+                    division_id,
+                    PULL_DIVISION_LABELS
+                        .iter()
+                        .map(|v| (*v).to_string())
+                        .collect(),
+                    self.param_value(division_id, 4.0).round() as usize,
+                    pull_division_value_from_index,
+                ),
+                self.param_knob(
+                    format!("mod-{label}-depth"),
+                    "Depth",
+                    depth_id,
+                    self.param_value(depth_id, 0.2),
+                    (0.0, 1.0),
+                    "%",
+                ),
+            ],
+        })
+    }
+
+    fn mod_routes_row(&self, label: &'static str, ids: [ClapId; 6]) -> Node<'static, GuiState> {
+        Node::Row(FlexSpec {
+            size: SizeSpec::Auto,
+            gap: CONTROL_GAP,
+            padding: Padding::default(),
+            align: Align::Start,
+            children: vec![
+                Node::Label(LabelSpec {
+                    text: label.to_string(),
+                    size: SizeSpec::Auto,
+                    color: Some(TITLE),
+                }),
+                self.param_knob(
+                    format!("route-{label}-tension"),
+                    "Ten",
+                    ids[0],
+                    self.param_value(ids[0], 0.0),
+                    (-1.0, 1.0),
+                    "",
+                ),
+                self.param_knob(
+                    format!("route-{label}-direction"),
+                    "Dir",
+                    ids[1],
+                    self.param_value(ids[1], 0.0),
+                    (-1.0, 1.0),
+                    "",
+                ),
+                self.param_knob(
+                    format!("route-{label}-grain"),
+                    "Grn",
+                    ids[2],
+                    self.param_value(ids[2], 0.0),
+                    (-1.0, 1.0),
+                    "",
+                ),
+                self.param_knob(
+                    format!("route-{label}-width"),
+                    "Wid",
+                    ids[3],
+                    self.param_value(ids[3], 0.0),
+                    (-1.0, 1.0),
+                    "",
+                ),
+                self.param_knob(
+                    format!("route-{label}-warp"),
+                    "Warp",
+                    ids[4],
+                    self.param_value(ids[4], 0.0),
+                    (-1.0, 1.0),
+                    "",
+                ),
+                self.param_knob(
+                    format!("route-{label}-feedback"),
+                    "Feed",
+                    ids[5],
+                    self.param_value(ids[5], 0.0),
+                    (-1.0, 1.0),
+                    "",
+                ),
+            ],
+        })
+    }
+
+    fn build_preset_bank(&self) -> Node<'static, GuiState> {
+        let mut children = Vec::with_capacity(TensionPreset::all().len());
+        for preset in TensionPreset::all() {
+            children.push(self.preset_button(preset));
+        }
+        Node::Panel(PanelSpec {
+            key: "preset-bank".to_string(),
+            title: Some("Tension Bank".to_string()),
+            padding: 8,
+            background: Some(Color::rgb(21, 26, 34)),
+            outline: Some(PANEL_BORDER),
+            header_height: None,
+            size: SizeSpec::Auto,
+            content: Box::new(Node::Row(FlexSpec {
+                size: SizeSpec::Auto,
+                gap: CONTROL_GAP,
+                padding: Padding::default(),
+                align: Align::Start,
+                children,
+            })),
+        })
+    }
+
+    fn preset_button(&self, preset: TensionPreset) -> Node<'static, GuiState> {
+        Node::Button(ButtonSpec {
+            key: format!("preset-{:?}", preset),
+            label: preset.label().to_string(),
+            control_size: Size {
+                width: 124,
+                height: 26,
+            },
+            size: SizeSpec::Auto,
+            on_interaction: Some(Box::new(move |state: &mut GuiState, event: ButtonEvent| {
+                if event.response.clicked {
+                    state.apply_preset(preset);
+                }
+            })),
+        })
+    }
+
+    fn quantize_indicator(&self) -> Node<'static, GuiState> {
+        Node::Widget(WidgetSpec {
+            key: "quantize-indicator".to_string(),
+            size: SizeSpec::Fixed(Size {
+                width: 220,
+                height: 18,
+            }),
+            render: Box::new(|ui, rect, state: &mut GuiState| {
+                let pull = state.param_bool(PARAM_PULL_TRIGGER_ID, false);
+                let latch = state.param_bool(PARAM_PULL_LATCH_ID, false);
+                let text = if pull || latch {
+                    "Quantize Armed"
+                } else {
+                    "Quantize Idle"
+                };
+                ui.canvas().fill_rect(rect, Color::rgb(20, 24, 31));
+                ui.text_with_color(
+                    rect.origin,
+                    text,
+                    if pull || latch { ACCENT } else { SUBTITLE },
+                );
+            }),
         })
     }
 
@@ -530,20 +1183,26 @@ impl GuiState {
         })
     }
 
-    fn param_knob(
+    fn param_value(&self, param_id: ClapId, default: f32) -> f32 {
+        self.params.get_param(param_id).unwrap_or(default)
+    }
+
+    fn param_bool(&self, param_id: ClapId, default: bool) -> bool {
+        self.param_value(param_id, if default { 1.0 } else { 0.0 }) >= 0.5
+    }
+
+    fn param_knob<K: Into<String>>(
         &self,
-        key: &str,
+        key: K,
         label: &str,
         param_id: ClapId,
         value: f32,
         range: (f32, f32),
         unit: &'static str,
     ) -> Node<'static, GuiState> {
-        let key_owned = key.to_string();
-        let label_owned = label.to_string();
         Node::Knob(KnobSpec {
-            key: key_owned,
-            label: label_owned,
+            key: key.into(),
+            label: label.to_string(),
             value_label: Some(format_value(value, range, unit)),
             value,
             range,
@@ -581,6 +1240,39 @@ impl GuiState {
         })
     }
 
+    fn param_dropdown<K: Into<String>>(
+        &self,
+        key: K,
+        label: &str,
+        param_id: ClapId,
+        options: Vec<String>,
+        selected: usize,
+        value_from_index: fn(usize) -> f32,
+    ) -> Node<'static, GuiState> {
+        Node::Dropdown(DropdownSpec {
+            key: key.into(),
+            label: label.to_string(),
+            options,
+            selected,
+            control_size: Size {
+                width: DROPDOWN_W,
+                height: DROPDOWN_H,
+            },
+            size: SizeSpec::Auto,
+            on_interaction: Some(Box::new(
+                move |state: &mut GuiState, event: DropdownEvent| {
+                    if event.response.changed {
+                        let value = value_from_index(event.selected);
+                        state.params.set_param(param_id, value);
+                        state.push_begin(param_id);
+                        state.push_value(param_id, value);
+                        state.push_end(param_id);
+                    }
+                },
+            )),
+        })
+    }
+
     fn pull_button(&self) -> Node<'static, GuiState> {
         Node::Region(RegionSpec {
             key: "pull-button".to_string(),
@@ -601,7 +1293,7 @@ impl GuiState {
                 }
             })),
             draw: Some(Box::new(|canvas, rect, state: &mut GuiState, response| {
-                let active = response.active || state.params.pull_trigger();
+                let active = response.active || state.param_bool(PARAM_PULL_TRIGGER_ID, false);
                 let fill = if active {
                     ACCENT
                 } else if response.hovered {
@@ -621,164 +1313,6 @@ impl GuiState {
                     1,
                 );
             })),
-        })
-    }
-
-    fn pull_shape_dropdown(&self) -> Node<'static, GuiState> {
-        Node::Dropdown(DropdownSpec {
-            key: "pull-shape".to_string(),
-            label: "Pull Shape".to_string(),
-            options: PULL_SHAPE_LABELS.iter().map(|v| (*v).to_string()).collect(),
-            selected: self.params.pull_shape_index(),
-            control_size: Size {
-                width: DROPDOWN_W,
-                height: DROPDOWN_H,
-            },
-            size: SizeSpec::Auto,
-            on_interaction: Some(Box::new(|state: &mut GuiState, event: DropdownEvent| {
-                if event.response.changed {
-                    let value = pull_shape_value_from_index(event.selected);
-                    state.params.set_param(PARAM_PULL_SHAPE_ID, value);
-                    state.push_begin(PARAM_PULL_SHAPE_ID);
-                    state.push_value(PARAM_PULL_SHAPE_ID, value);
-                    state.push_end(PARAM_PULL_SHAPE_ID);
-                }
-            })),
-        })
-    }
-
-    fn mode_button(&self, mode: ModeCard) -> Node<'static, GuiState> {
-        Node::Button(ButtonSpec {
-            key: format!("mode-{}", mode.key()),
-            label: format!("{}", mode.title()),
-            control_size: Size {
-                width: 220,
-                height: 28,
-            },
-            size: SizeSpec::Auto,
-            on_interaction: Some(Box::new(move |state: &mut GuiState, event: ButtonEvent| {
-                if event.response.clicked {
-                    state.apply_mode(mode);
-                }
-            })),
-        })
-    }
-
-    fn mod_run_toggle(&self) -> Node<'static, GuiState> {
-        Node::Toggle(ToggleSpec {
-            key: "mod-run".to_string(),
-            label: "Run".to_string(),
-            value: self.mod_bank.run,
-            control_size: Size {
-                width: TOGGLE_W,
-                height: TOGGLE_H,
-            },
-            size: SizeSpec::Auto,
-            on_interaction: Some(Box::new(|state: &mut GuiState, event: ToggleEvent| {
-                state.mod_bank.run = event.value;
-            })),
-        })
-    }
-
-    fn mod_row(
-        &self,
-        label: &str,
-        rate: ModParam,
-        depth: ModParam,
-        drift: Option<ModParam>,
-    ) -> Node<'static, GuiState> {
-        let mut children = vec![
-            Node::Label(LabelSpec {
-                text: label.to_string(),
-                size: SizeSpec::Auto,
-                color: Some(TITLE),
-            }),
-            self.mod_knob(format!("{label}-rate"), "Rate", rate, (0.01, 1.5)),
-            self.mod_knob(format!("{label}-depth"), "Depth", depth, (0.0, 1.0)),
-        ];
-        if let Some(drift_param) = drift {
-            children.push(self.mod_knob(
-                format!("{label}-drift"),
-                "Drift",
-                drift_param,
-                (0.0, 1.0),
-            ));
-        }
-        Node::Row(FlexSpec {
-            size: SizeSpec::Auto,
-            gap: CONTROL_GAP,
-            padding: Padding::default(),
-            align: Align::Start,
-            children,
-        })
-    }
-
-    fn mod_knob(
-        &self,
-        key: String,
-        label: &'static str,
-        param: ModParam,
-        range: (f32, f32),
-    ) -> Node<'static, GuiState> {
-        let value = self.mod_bank.get(param);
-        Node::Knob(KnobSpec {
-            key,
-            label: label.to_string(),
-            value_label: Some(format!("{value:.2}")),
-            value,
-            range,
-            size: SizeSpec::Auto,
-            on_interaction: Some(Box::new(move |state: &mut GuiState, event: KnobEvent| {
-                state.mod_bank.set(param, event.value);
-            })),
-        })
-    }
-
-    fn mod_routes_grid(&self) -> Node<'static, GuiState> {
-        let mut children = Vec::with_capacity(20);
-        for src in 0..4 {
-            let label = match src {
-                0 => "A",
-                1 => "B",
-                2 => "R",
-                _ => "E",
-            };
-            children.push(Node::Label(LabelSpec {
-                text: label.to_string(),
-                size: SizeSpec::Auto,
-                color: Some(TITLE),
-            }));
-            for dst in 0..4 {
-                let key = format!("route-{src}-{dst}");
-                let value = self.mod_bank.routes[src][dst];
-                children.push(Node::Toggle(ToggleSpec {
-                    key,
-                    label: "".to_string(),
-                    value,
-                    control_size: Size {
-                        width: 20,
-                        height: 12,
-                    },
-                    size: SizeSpec::Auto,
-                    on_interaction: Some(Box::new(
-                        move |state: &mut GuiState, event: ToggleEvent| {
-                            state.mod_bank.routes[src][dst] = event.value;
-                        },
-                    )),
-                }));
-            }
-        }
-
-        Node::Grid(DeclarativeGridSpec {
-            size: SizeSpec::Auto,
-            columns: 5,
-            cell_size: Size {
-                width: 24,
-                height: 18,
-            },
-            gap: 4,
-            padding: Padding::default(),
-            children,
         })
     }
 
@@ -833,16 +1367,18 @@ impl GuiState {
         if response.double_clicked {
             self.push_begin(PARAM_PULL_DIRECTION_ID);
             self.push_begin(PARAM_ELASTICITY_ID);
-            self.set_param_immediate(PARAM_PULL_DIRECTION_ID, 0.52);
-            self.set_param_immediate(PARAM_ELASTICITY_ID, 0.70);
+            self.set_param_immediate(PARAM_PULL_DIRECTION_ID, 0.5);
+            self.set_param_immediate(PARAM_ELASTICITY_ID, 0.65);
             self.push_end(PARAM_PULL_DIRECTION_ID);
             self.push_end(PARAM_ELASTICITY_ID);
             self.map_dragging = false;
         }
 
-        let px = rect.origin.x + (self.params.pull_direction() * rect.size.width as f32) as i32;
-        let py =
-            rect.origin.y + ((1.0 - self.params.elasticity()) * rect.size.height as f32) as i32;
+        let px = rect.origin.x
+            + (self.param_value(PARAM_PULL_DIRECTION_ID, 0.5) * rect.size.width as f32) as i32;
+        let py = rect.origin.y
+            + ((1.0 - self.param_value(PARAM_ELASTICITY_ID, 0.65)) * rect.size.height as f32)
+                as i32;
         let point = Point { x: px, y: py };
 
         self.map_trace.push(point);
@@ -938,7 +1474,14 @@ impl GuiState {
 
         self.meter_smooth[index] +=
             (values[index] - self.meter_smooth[index]) * (self.frame_dt * 12.0);
+        self.meter_peak_hold[index] = if values[index] >= self.meter_peak_hold[index] {
+            values[index]
+        } else {
+            (self.meter_peak_hold[index] - self.frame_dt * 0.4).max(self.meter_smooth[index])
+        };
+
         let value = self.meter_smooth[index].clamp(0.0, 1.0);
+        let hold = self.meter_peak_hold[index].clamp(0.0, 1.0);
 
         let bar_rect = Rect {
             origin: Point {
@@ -969,6 +1512,20 @@ impl GuiState {
             ui.canvas().fill_rect(fill_rect, color);
         }
 
+        let hold_y = bar_rect.origin.y + bar_rect.size.height as i32
+            - (bar_rect.size.height as f32 * hold).round() as i32;
+        ui.canvas().draw_line(
+            Point {
+                x: bar_rect.origin.x,
+                y: hold_y,
+            },
+            Point {
+                x: bar_rect.origin.x + bar_rect.size.width as i32,
+                y: hold_y,
+            },
+            METER_HOLD,
+        );
+
         ui.text_with_color(
             Point {
                 x: rect.origin.x,
@@ -995,9 +1552,8 @@ impl GuiState {
         self.push_value(param_id, value);
     }
 
-    fn apply_mode(&mut self, mode: ModeCard) {
-        self.active_mode = mode;
-        for (param_id, value) in mode.updates() {
+    fn apply_preset(&mut self, preset: TensionPreset) {
+        for (param_id, value) in preset.updates() {
             self.push_begin(*param_id);
             self.params.set_param(*param_id, *value);
             self.push_value(*param_id, *value);
@@ -1028,249 +1584,6 @@ impl GuiState {
             .push_gesture_end(&self.automation_config, param_id);
         self.request_flush();
     }
-
-    fn apply_modulation(&mut self, dt: f32) {
-        if !self.mod_bank.run {
-            return;
-        }
-
-        self.mod_bank.phase_a =
-            (self.mod_bank.phase_a + dt * self.mod_bank.lfo_a_rate * std::f32::consts::TAU).fract();
-        self.mod_bank.phase_b =
-            (self.mod_bank.phase_b + dt * self.mod_bank.lfo_b_rate * std::f32::consts::TAU).fract();
-        self.mod_bank.walk_state = (self.mod_bank.walk_state
-            + signed_noise(&mut self.mod_bank.noise_state) * self.mod_bank.walk_rate * dt * 2.2)
-            .clamp(-1.0, 1.0);
-
-        let a = self.mod_bank.phase_a.sin() * self.mod_bank.lfo_a_depth;
-        let tri = triangle(self.mod_bank.phase_b);
-        let b = (tri + (self.mod_bank.phase_b.sin() * self.mod_bank.lfo_b_drift * 0.4))
-            * self.mod_bank.lfo_b_depth;
-        let walk = self.mod_bank.walk_state * self.mod_bank.walk_depth;
-
-        let input = (self.status.input_left() + self.status.input_right()) * 0.5;
-        self.mod_bank.env_state +=
-            (input - self.mod_bank.env_state) * (0.02 + self.mod_bank.env_sensitivity * 0.3);
-        let env = (self.mod_bank.env_state * 2.0 - 1.0) * self.mod_bank.env_depth;
-        let sources = [a, b, walk, env];
-
-        let mut destinations = [
-            self.params.tension(),
-            self.params.pull_direction(),
-            self.params.grain_continuity(),
-            self.params.width(),
-        ];
-
-        for (src_index, source) in sources.iter().enumerate() {
-            for (dst_index, value) in destinations.iter_mut().enumerate() {
-                if self.mod_bank.routes[src_index][dst_index] {
-                    *value += source * 0.2;
-                }
-            }
-        }
-
-        let ids = [
-            PARAM_TENSION_ID,
-            PARAM_PULL_DIRECTION_ID,
-            PARAM_GRAIN_CONTINUITY_ID,
-            PARAM_WIDTH_ID,
-        ];
-
-        for (index, value) in destinations.iter_mut().enumerate() {
-            *value = value.clamp(0.0, 1.0);
-            if (*value - self.mod_bank.last_sent[index]).abs() > 0.002 {
-                self.params.set_param(ids[index], *value);
-                self.push_value(ids[index], *value);
-                self.mod_bank.last_sent[index] = *value;
-            }
-        }
-    }
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-enum ModeCard {
-    TapeTugPad,
-    ElasticDroneMaker,
-    RatchetAtmos,
-    GhostPercTail,
-}
-
-impl ModeCard {
-    fn key(self) -> &'static str {
-        match self {
-            Self::TapeTugPad => "tape-tug",
-            Self::ElasticDroneMaker => "drone-maker",
-            Self::RatchetAtmos => "ratchet-atmos",
-            Self::GhostPercTail => "ghost-tail",
-        }
-    }
-
-    fn title(self) -> &'static str {
-        match self {
-            Self::TapeTugPad => "Tape Tug Pad",
-            Self::ElasticDroneMaker => "Elastic Drone Maker",
-            Self::RatchetAtmos => "Ratchet Atmos",
-            Self::GhostPercTail => "Ghost Perc Tail",
-        }
-    }
-
-    fn updates(self) -> &'static [(ClapId, f32)] {
-        match self {
-            Self::TapeTugPad => &[
-                (PARAM_TENSION_ID, 0.52),
-                (PARAM_PULL_RATE_ID, 0.24),
-                (PARAM_PULL_SHAPE_ID, 1.0),
-                (PARAM_HOLD_ID, 0.0),
-                (PARAM_GRAIN_CONTINUITY_ID, 0.2),
-                (PARAM_PITCH_COUPLING_ID, 0.24),
-                (PARAM_WIDTH_ID, 0.74),
-                (PARAM_DIFFUSION_ID, 0.62),
-                (PARAM_FEEDBACK_ID, 0.08),
-            ],
-            Self::ElasticDroneMaker => &[
-                (PARAM_TENSION_ID, 0.68),
-                (PARAM_PULL_RATE_ID, 0.12),
-                (PARAM_PULL_SHAPE_ID, 1.0),
-                (PARAM_HOLD_ID, 1.0),
-                (PARAM_GRAIN_CONTINUITY_ID, 0.34),
-                (PARAM_WIDTH_ID, 0.66),
-                (PARAM_DIFFUSION_ID, 0.64),
-                (PARAM_FEEDBACK_ID, 0.32),
-            ],
-            Self::RatchetAtmos => &[
-                (PARAM_TENSION_ID, 0.58),
-                (PARAM_PULL_RATE_ID, 0.34),
-                (PARAM_PULL_SHAPE_ID, 2.0),
-                (PARAM_HOLD_ID, 0.0),
-                (PARAM_GRAIN_CONTINUITY_ID, 0.56),
-                (PARAM_WIDTH_ID, 0.63),
-                (PARAM_DIFFUSION_ID, 0.58),
-                (PARAM_CLEAN_DIRTY_ID, 1.0),
-            ],
-            Self::GhostPercTail => &[
-                (PARAM_TENSION_ID, 0.42),
-                (PARAM_PULL_RATE_ID, 0.19),
-                (PARAM_PULL_SHAPE_ID, 0.0),
-                (PARAM_HOLD_ID, 0.0),
-                (PARAM_GRAIN_CONTINUITY_ID, 0.16),
-                (PARAM_PITCH_COUPLING_ID, 0.12),
-                (PARAM_DIFFUSION_ID, 0.55),
-                (PARAM_FEEDBACK_ID, 0.12),
-                (PARAM_CLEAN_DIRTY_ID, 0.0),
-            ],
-        }
-    }
-}
-
-#[derive(Copy, Clone)]
-enum ModParam {
-    LfoARate,
-    LfoADepth,
-    LfoADrift,
-    LfoBRate,
-    LfoBDepth,
-    LfoBDrift,
-    WalkRate,
-    WalkDepth,
-    EnvSensitivity,
-    EnvDepth,
-}
-
-struct ModBank {
-    run: bool,
-    lfo_a_rate: f32,
-    lfo_a_depth: f32,
-    lfo_a_drift: f32,
-    lfo_b_rate: f32,
-    lfo_b_depth: f32,
-    lfo_b_drift: f32,
-    walk_rate: f32,
-    walk_depth: f32,
-    env_sensitivity: f32,
-    env_depth: f32,
-    routes: [[bool; 4]; 4],
-    phase_a: f32,
-    phase_b: f32,
-    walk_state: f32,
-    env_state: f32,
-    last_sent: [f32; 4],
-    noise_state: u32,
-}
-
-impl Default for ModBank {
-    fn default() -> Self {
-        Self {
-            run: true,
-            lfo_a_rate: 0.09,
-            lfo_a_depth: 0.14,
-            lfo_a_drift: 0.2,
-            lfo_b_rate: 0.04,
-            lfo_b_depth: 0.12,
-            lfo_b_drift: 0.16,
-            walk_rate: 0.25,
-            walk_depth: 0.18,
-            env_sensitivity: 0.46,
-            env_depth: 0.12,
-            routes: [
-                [true, false, false, false],
-                [false, true, false, false],
-                [false, false, true, false],
-                [false, false, false, true],
-            ],
-            phase_a: 0.0,
-            phase_b: 0.0,
-            walk_state: 0.0,
-            env_state: 0.0,
-            last_sent: [0.0; 4],
-            noise_state: 0xA5A5_9151,
-        }
-    }
-}
-
-impl ModBank {
-    fn get(&self, param: ModParam) -> f32 {
-        match param {
-            ModParam::LfoARate => self.lfo_a_rate,
-            ModParam::LfoADepth => self.lfo_a_depth,
-            ModParam::LfoADrift => self.lfo_a_drift,
-            ModParam::LfoBRate => self.lfo_b_rate,
-            ModParam::LfoBDepth => self.lfo_b_depth,
-            ModParam::LfoBDrift => self.lfo_b_drift,
-            ModParam::WalkRate => self.walk_rate,
-            ModParam::WalkDepth => self.walk_depth,
-            ModParam::EnvSensitivity => self.env_sensitivity,
-            ModParam::EnvDepth => self.env_depth,
-        }
-    }
-
-    fn set(&mut self, param: ModParam, value: f32) {
-        match param {
-            ModParam::LfoARate => self.lfo_a_rate = value,
-            ModParam::LfoADepth => self.lfo_a_depth = value,
-            ModParam::LfoADrift => self.lfo_a_drift = value,
-            ModParam::LfoBRate => self.lfo_b_rate = value,
-            ModParam::LfoBDepth => self.lfo_b_depth = value,
-            ModParam::LfoBDrift => self.lfo_b_drift = value,
-            ModParam::WalkRate => self.walk_rate = value,
-            ModParam::WalkDepth => self.walk_depth = value,
-            ModParam::EnvSensitivity => self.env_sensitivity = value,
-            ModParam::EnvDepth => self.env_depth = value,
-        }
-    }
-}
-
-fn signed_noise(state: &mut u32) -> f32 {
-    *state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-    ((*state >> 8) as f32 / ((1u32 << 24) as f32)) * 2.0 - 1.0
-}
-
-fn triangle(phase: f32) -> f32 {
-    let p = phase.fract();
-    if p < 0.5 {
-        p * 4.0 - 1.0
-    } else {
-        3.0 - p * 4.0
-    }
 }
 
 fn format_value(value: f32, range: (f32, f32), unit: &'static str) -> String {
@@ -1281,6 +1594,7 @@ fn format_value(value: f32, range: (f32, f32), unit: &'static str) -> String {
             format!("{pct:.0}%")
         }
         "Hz" => format!("{value:.2} Hz"),
+        "dB" => format!("{value:+.1} dB"),
         _ => format!("{value:.2}"),
     }
 }

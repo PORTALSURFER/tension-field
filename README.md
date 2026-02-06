@@ -46,14 +46,31 @@ Signal flow:
 
 ## Editor UI
 
-The plugin includes a fixed-size performance editor (`1280x860`) with:
+The plugin includes a fixed-size performance editor (`1280x860`) with tabbed workflow:
 
-- Left panel: gesture controls plus four mode cards.
-- Center panel: 2D Tension Map (`Pull Direction` x `Elasticity`) with live trace.
-- Right panel: space/character controls and a macro-first slow mod bank.
-- Bottom strip: detailed meters (input, Elastic, Warp, Space, feedback, output, tension activity).
+- `Perform`: pull trigger, latch, tension map, and a 10-preset tension bank.
+- `Rhythm`: time mode/division/rate plus swing, bias, rebound, and release snap.
+- `Tone + Mod`: warp/character/space controls plus DSP mod-matrix source and route editing.
+- `Safety + Out`: feedback, ducking, energy ceiling, output trim, and stage meters with peak hold.
 
 The current `toybox` GUI backend is Windows-only, so GUI hosting is enabled on Windows builds and omitted on non-Windows targets. The modulation engine runs in DSP, so modulation remains active even when the GUI is closed.
+
+## Live Tension Recipes
+
+1. **Pre-drop coil**
+- Set `Time Mode=Sync Div`, `Pull Division=1 Bar`, `Pull Latch=On`.
+- Raise `Tension` to ~70%, `Tension Bias` to ~75%, `Release Snap` to ~60%.
+- Trigger `Pull` one bar before the drop, then release at transition.
+
+2. **Triplet panic push**
+- Set `Pull Division=1/4T`, `Swing` around 20%, `Pull Quantize=1/16`.
+- Use `Warp Motion` 55-65% and `Character=Dirty`.
+- Drive repeated `Pull` hits for syncopated build pressure.
+
+3. **Crush aftershock tail**
+- Set `Character=Crush`, `Feedback` 30-40%, `Ducking` 30%+.
+- Lower `Energy Ceiling` to ~50-60% for controlled aggression.
+- Keep `Output Trim` near `-2 dB` while pushing `Tension` above 65%.
 
 ## Build
 

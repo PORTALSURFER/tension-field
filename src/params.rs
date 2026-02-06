@@ -479,6 +479,8 @@ pub(crate) struct ModSettings {
 pub(crate) struct TensionFieldSettings {
     /// Overall stretching force.
     pub tension: f32,
+    /// Biases where cycle tension energy concentrates (early vs late in phase).
+    pub tension_bias: f32,
     /// Free-running or host-synced pull timing.
     pub time_mode: TimeMode,
     /// Gesture rate in Hertz for free mode.
@@ -497,6 +499,8 @@ pub(crate) struct TensionFieldSettings {
     pub pull_quantize: PullQuantize,
     /// Release rebound amount.
     pub rebound: f32,
+    /// Shapes how sharply pull energy drops after release.
+    pub release_snap: f32,
     /// Pull direction from backward to forward.
     pub pull_direction: f32,
     /// Viscous-to-spring behavior amount.
@@ -525,6 +529,8 @@ pub(crate) struct TensionFieldSettings {
     pub ducking: f32,
     /// Output trim in decibels.
     pub output_trim_db: f32,
+    /// Soft safety amount that attenuates excessive energy build-up.
+    pub energy_ceiling: f32,
     /// Modulation matrix runtime configuration.
     pub modulation: ModSettings,
 }
@@ -532,6 +538,7 @@ pub(crate) struct TensionFieldSettings {
 /// Thread-safe parameter storage.
 pub(crate) struct TensionFieldParams {
     tension: AtomicF32,
+    tension_bias: AtomicF32,
     pull_rate_hz: AtomicF32,
     pull_shape: AtomicF32,
     hold: AtomicU32,
@@ -545,6 +552,7 @@ pub(crate) struct TensionFieldParams {
     elasticity: AtomicF32,
     pull_trigger: AtomicU32,
     rebound: AtomicF32,
+    release_snap: AtomicF32,
     clean_dirty: AtomicF32,
     feedback: AtomicF32,
     time_mode: AtomicF32,
@@ -556,6 +564,7 @@ pub(crate) struct TensionFieldParams {
     warp_motion: AtomicF32,
     ducking: AtomicF32,
     output_trim_db: AtomicF32,
+    energy_ceiling: AtomicF32,
     mod_run: AtomicU32,
     mod_a_shape: AtomicF32,
     mod_a_rate_mode: AtomicF32,
@@ -576,6 +585,7 @@ impl TensionFieldParams {
     pub(crate) fn new() -> Self {
         Self {
             tension: AtomicF32::new(0.5),
+            tension_bias: AtomicF32::new(0.5),
             pull_rate_hz: AtomicF32::new(0.35),
             pull_shape: AtomicF32::new(PullShape::Rubber.as_value()),
             hold: AtomicU32::new(0),
@@ -589,6 +599,7 @@ impl TensionFieldParams {
             elasticity: AtomicF32::new(0.65),
             pull_trigger: AtomicU32::new(0),
             rebound: AtomicF32::new(0.55),
+            release_snap: AtomicF32::new(0.35),
             clean_dirty: AtomicF32::new(CharacterMode::Clean.as_value()),
             feedback: AtomicF32::new(0.12),
             time_mode: AtomicF32::new(TimeMode::SyncDivision.as_value()),
@@ -600,6 +611,7 @@ impl TensionFieldParams {
             warp_motion: AtomicF32::new(0.35),
             ducking: AtomicF32::new(0.0),
             output_trim_db: AtomicF32::new(0.0),
+            energy_ceiling: AtomicF32::new(0.7),
             mod_run: AtomicU32::new(1),
             mod_a_shape: AtomicF32::new(ModSourceShape::Sine.as_value()),
             mod_a_rate_mode: AtomicF32::new(ModRateMode::SyncDivision.as_value()),
@@ -634,6 +646,7 @@ impl TensionFieldParams {
     pub(crate) fn set_param(&self, param_id: ClapId, value: f32) {
         match param_id {
             PARAM_TENSION_ID => self.tension.store(clamp(value, 0.0, 1.0)),
+            PARAM_TENSION_BIAS_ID => self.tension_bias.store(clamp(value, 0.0, 1.0)),
             PARAM_PULL_RATE_ID => self.pull_rate_hz.store(clamp(value, 0.02, 4.0)),
             PARAM_PULL_SHAPE_ID => self.pull_shape.store(clamp(value, 0.0, 4.0).round()),
             PARAM_HOLD_ID => self
@@ -653,6 +666,7 @@ impl TensionFieldParams {
                 .pull_trigger
                 .store(bool_to_u32(value >= 0.5), Ordering::Relaxed),
             PARAM_REBOUND_ID => self.rebound.store(clamp(value, 0.0, 1.0)),
+            PARAM_RELEASE_SNAP_ID => self.release_snap.store(clamp(value, 0.0, 1.0)),
             PARAM_CLEAN_DIRTY_ID => self.clean_dirty.store(clamp(value, 0.0, 2.0).round()),
             PARAM_FEEDBACK_ID => self.feedback.store(clamp(value, 0.0, 0.7)),
             PARAM_TIME_MODE_ID => self.time_mode.store(clamp(value, 0.0, 1.0).round()),
@@ -666,6 +680,7 @@ impl TensionFieldParams {
             PARAM_WARP_MOTION_ID => self.warp_motion.store(clamp(value, 0.0, 1.0)),
             PARAM_DUCKING_ID => self.ducking.store(clamp(value, 0.0, 1.0)),
             PARAM_OUTPUT_TRIM_DB_ID => self.output_trim_db.store(clamp(value, -12.0, 6.0)),
+            PARAM_ENERGY_CEILING_ID => self.energy_ceiling.store(clamp(value, 0.0, 1.0)),
             PARAM_MOD_RUN_ID => self
                 .mod_run
                 .store(bool_to_u32(value >= 0.5), Ordering::Relaxed),
@@ -699,6 +714,7 @@ impl TensionFieldParams {
     pub(crate) fn get_param(&self, param_id: ClapId) -> Option<f32> {
         match param_id {
             PARAM_TENSION_ID => Some(self.tension.load()),
+            PARAM_TENSION_BIAS_ID => Some(self.tension_bias.load()),
             PARAM_PULL_RATE_ID => Some(self.pull_rate_hz.load()),
             PARAM_PULL_SHAPE_ID => Some(self.pull_shape.load()),
             PARAM_HOLD_ID => Some(u32_to_bool(self.hold.load(Ordering::Relaxed)) as u8 as f32),
@@ -716,6 +732,7 @@ impl TensionFieldParams {
                 Some(u32_to_bool(self.pull_trigger.load(Ordering::Relaxed)) as u8 as f32)
             }
             PARAM_REBOUND_ID => Some(self.rebound.load()),
+            PARAM_RELEASE_SNAP_ID => Some(self.release_snap.load()),
             PARAM_CLEAN_DIRTY_ID => Some(self.clean_dirty.load()),
             PARAM_FEEDBACK_ID => Some(self.feedback.load()),
             PARAM_TIME_MODE_ID => Some(self.time_mode.load()),
@@ -729,6 +746,7 @@ impl TensionFieldParams {
             PARAM_WARP_MOTION_ID => Some(self.warp_motion.load()),
             PARAM_DUCKING_ID => Some(self.ducking.load()),
             PARAM_OUTPUT_TRIM_DB_ID => Some(self.output_trim_db.load()),
+            PARAM_ENERGY_CEILING_ID => Some(self.energy_ceiling.load()),
             PARAM_MOD_RUN_ID => {
                 Some(u32_to_bool(self.mod_run.load(Ordering::Relaxed)) as u8 as f32)
             }
@@ -765,6 +783,7 @@ impl TensionFieldParams {
 
         TensionFieldSettings {
             tension: self.tension.load(),
+            tension_bias: self.tension_bias.load(),
             time_mode: TimeMode::from_value(self.time_mode.load()),
             pull_rate_hz: self.pull_rate_hz.load(),
             pull_division: PullDivision::from_value(self.pull_division.load()),
@@ -775,6 +794,7 @@ impl TensionFieldParams {
                 || u32_to_bool(self.hold.load(Ordering::Relaxed)),
             pull_quantize: PullQuantize::from_value(self.pull_quantize.load()),
             rebound: self.rebound.load(),
+            release_snap: self.release_snap.load(),
             pull_direction: self.pull_direction.load() * 2.0 - 1.0,
             elasticity: self.elasticity.load(),
             grain_continuity: self.grain_continuity.load(),
@@ -789,6 +809,7 @@ impl TensionFieldParams {
             feedback: self.feedback.load(),
             ducking: self.ducking.load(),
             output_trim_db: self.output_trim_db.load(),
+            energy_ceiling: self.energy_ceiling.load(),
             modulation: ModSettings {
                 run: u32_to_bool(self.mod_run.load(Ordering::Relaxed)),
                 source_a: ModSourceSettings {
@@ -814,6 +835,12 @@ impl TensionFieldParams {
     #[cfg(target_os = "windows")]
     pub(crate) fn tension(&self) -> f32 {
         self.tension.load()
+    }
+
+    /// Read the tension bias macro.
+    #[cfg(target_os = "windows")]
+    pub(crate) fn tension_bias(&self) -> f32 {
+        self.tension_bias.load()
     }
 
     /// Read the pull rate in Hertz.
@@ -894,6 +921,12 @@ impl TensionFieldParams {
         self.rebound.load()
     }
 
+    /// Read the release snap amount.
+    #[cfg(target_os = "windows")]
+    pub(crate) fn release_snap(&self) -> f32 {
+        self.release_snap.load()
+    }
+
     /// Read the clean/dirty control value.
     #[cfg(target_os = "windows")]
     pub(crate) fn clean_dirty(&self) -> f32 {
@@ -904,6 +937,12 @@ impl TensionFieldParams {
     #[cfg(target_os = "windows")]
     pub(crate) fn feedback(&self) -> f32 {
         self.feedback.load()
+    }
+
+    /// Read the energy ceiling amount.
+    #[cfg(target_os = "windows")]
+    pub(crate) fn energy_ceiling(&self) -> f32 {
+        self.energy_ceiling.load()
     }
 }
 
@@ -919,6 +958,42 @@ pub(crate) fn pull_shape_value_from_index(index: usize) -> f32 {
     }
 }
 
+/// Convert a pull-division index to an internal division value.
+#[cfg(target_os = "windows")]
+pub(crate) fn pull_division_value_from_index(index: usize) -> f32 {
+    index.min(7) as f32
+}
+
+/// Convert a pull-quantize index to an internal quantize value.
+#[cfg(target_os = "windows")]
+pub(crate) fn pull_quantize_value_from_index(index: usize) -> f32 {
+    index.min(3) as f32
+}
+
+/// Convert a warp-color index to an internal color value.
+#[cfg(target_os = "windows")]
+pub(crate) fn warp_color_value_from_index(index: usize) -> f32 {
+    index.min(2) as f32
+}
+
+/// Convert a character-mode index to an internal mode value.
+#[cfg(target_os = "windows")]
+pub(crate) fn character_mode_value_from_index(index: usize) -> f32 {
+    index.min(2) as f32
+}
+
+/// Convert a modulation source shape index to an internal shape value.
+#[cfg(target_os = "windows")]
+pub(crate) fn mod_source_shape_value_from_index(index: usize) -> f32 {
+    index.min(3) as f32
+}
+
+/// Convert a modulation rate-mode index to an internal mode value.
+#[cfg(target_os = "windows")]
+pub(crate) fn mod_rate_mode_value_from_index(index: usize) -> f32 {
+    index.min(1) as f32
+}
+
 /// Return the number of host-visible parameters.
 pub(crate) fn param_count() -> u32 {
     PARAM_DEFS.len() as u32
@@ -927,9 +1002,18 @@ pub(crate) fn param_count() -> u32 {
 /// Number of serialized parameter values stored in plugin state.
 pub(crate) const STATE_VALUE_COUNT: usize = PARAM_DEFS.len();
 
+/// Build a default ordered parameter snapshot in `PARAM_DEFS` order.
+pub(crate) fn default_state_values() -> [f32; STATE_VALUE_COUNT] {
+    let mut values = [0.0; STATE_VALUE_COUNT];
+    for (index, def) in PARAM_DEFS.iter().enumerate() {
+        values[index] = def.default_value as f32;
+    }
+    values
+}
+
 /// Build a stable, ordered parameter snapshot for CLAP state serialization.
 pub(crate) fn state_values(params: &TensionFieldParams) -> [f32; STATE_VALUE_COUNT] {
-    let mut values = [0.0; STATE_VALUE_COUNT];
+    let mut values = default_state_values();
     for (index, def) in PARAM_DEFS.iter().enumerate() {
         values[index] = params.get_param(def.id).unwrap_or(def.default_value as f32);
     }
@@ -959,6 +1043,7 @@ pub(crate) fn value_to_text(
 ) -> std::fmt::Result {
     match param_id {
         PARAM_TENSION_ID
+        | PARAM_TENSION_BIAS_ID
         | PARAM_GRAIN_CONTINUITY_ID
         | PARAM_PITCH_COUPLING_ID
         | PARAM_WIDTH_ID
@@ -966,10 +1051,12 @@ pub(crate) fn value_to_text(
         | PARAM_AIR_DAMPING_ID
         | PARAM_ELASTICITY_ID
         | PARAM_REBOUND_ID
+        | PARAM_RELEASE_SNAP_ID
         | PARAM_FEEDBACK_ID
         | PARAM_SWING_ID
         | PARAM_WARP_MOTION_ID
         | PARAM_DUCKING_ID
+        | PARAM_ENERGY_CEILING_ID
         | PARAM_MOD_A_DEPTH_ID
         | PARAM_MOD_B_DEPTH_ID => write!(writer, "{:.0}%", value * 100.0),
         PARAM_PULL_RATE_ID | PARAM_MOD_A_RATE_HZ_ID | PARAM_MOD_B_RATE_HZ_ID => {
@@ -1180,10 +1267,40 @@ pub(crate) const PARAM_MOD_B_TO_WIDTH_ID: ClapId = ClapId::new(46);
 pub(crate) const PARAM_MOD_B_TO_WARP_MOTION_ID: ClapId = ClapId::new(47);
 /// Parameter id for route depth from source B to Feedback.
 pub(crate) const PARAM_MOD_B_TO_FEEDBACK_ID: ClapId = ClapId::new(48);
+/// Parameter id for cycle tension-bias macro.
+pub(crate) const PARAM_TENSION_BIAS_ID: ClapId = ClapId::new(49);
+/// Parameter id for release snap contour amount.
+pub(crate) const PARAM_RELEASE_SNAP_ID: ClapId = ClapId::new(50);
+/// Parameter id for soft energy ceiling amount.
+pub(crate) const PARAM_ENERGY_CEILING_ID: ClapId = ClapId::new(51);
 
 /// Pull-shape labels used by the editor dropdown.
 #[cfg(target_os = "windows")]
 pub(crate) const PULL_SHAPE_LABELS: [&str; 5] = ["Linear", "Rubber", "Ratchet", "Wave", "Pulse"];
+/// Time-mode labels used by the editor dropdown.
+#[cfg(target_os = "windows")]
+pub(crate) const TIME_MODE_LABELS: [&str; 2] = ["Free Hz", "Sync Div"];
+/// Pull-division labels used by the editor dropdown.
+#[cfg(target_os = "windows")]
+pub(crate) const PULL_DIVISION_LABELS: [&str; 8] = [
+    "1/16", "1/8T", "1/8", "1/4T", "1/4", "1/2", "1 Bar", "2 Bar",
+];
+/// Pull-quantize labels used by the editor dropdown.
+#[cfg(target_os = "windows")]
+pub(crate) const PULL_QUANTIZE_LABELS: [&str; 4] = ["None", "1/16", "1/8", "1/4"];
+/// Warp-color labels used by the editor dropdown.
+#[cfg(target_os = "windows")]
+pub(crate) const WARP_COLOR_LABELS: [&str; 3] = ["Neutral", "Dark Drag", "Bright Shear"];
+/// Character labels used by the editor dropdown.
+#[cfg(target_os = "windows")]
+pub(crate) const CHARACTER_LABELS: [&str; 3] = ["Clean", "Dirty", "Crush"];
+/// Mod source shape labels used by the editor dropdown.
+#[cfg(target_os = "windows")]
+pub(crate) const MOD_SOURCE_SHAPE_LABELS: [&str; 4] =
+    ["Sine", "Triangle", "Random Walk", "Envelope"];
+/// Mod rate mode labels used by the editor dropdown.
+#[cfg(target_os = "windows")]
+pub(crate) const MOD_RATE_MODE_LABELS: [&str; 2] = ["Free Hz", "Sync Div"];
 
 #[derive(Copy, Clone)]
 struct ParamDef {
@@ -1649,6 +1766,33 @@ const PARAM_DEFS: &[ParamDef] = &[
         min_value: -1.0,
         max_value: 1.0,
         default_value: 0.0,
+        flags: AUTO,
+    },
+    ParamDef {
+        id: PARAM_TENSION_BIAS_ID,
+        name: b"Tension Bias",
+        module: b"Rhythm",
+        min_value: 0.0,
+        max_value: 1.0,
+        default_value: 0.5,
+        flags: AUTO,
+    },
+    ParamDef {
+        id: PARAM_RELEASE_SNAP_ID,
+        name: b"Release Snap",
+        module: b"Rhythm",
+        min_value: 0.0,
+        max_value: 1.0,
+        default_value: 0.35,
+        flags: AUTO,
+    },
+    ParamDef {
+        id: PARAM_ENERGY_CEILING_ID,
+        name: b"Energy Ceiling",
+        module: b"Safety",
+        min_value: 0.0,
+        max_value: 1.0,
+        default_value: 0.7,
         flags: AUTO,
     },
 ];

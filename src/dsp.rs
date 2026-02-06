@@ -45,6 +45,9 @@ pub(crate) struct TensionFieldEngine {
     feedback_left: f32,
     feedback_right: f32,
     input_env: f32,
+    high_env: f32,
+    safety_gain: f32,
+    previous_input_abs: f32,
     output_gain: f32,
 }
 
@@ -65,6 +68,9 @@ impl TensionFieldEngine {
             feedback_left: 0.0,
             feedback_right: 0.0,
             input_env: 0.0,
+            high_env: 0.0,
+            safety_gain: 1.0,
+            previous_input_abs: 0.0,
             output_gain: 1.0,
         }
     }
@@ -101,6 +107,8 @@ impl TensionFieldEngine {
 
             let input_abs = in_l.abs().max(in_r.abs());
             self.input_env += (input_abs - self.input_env) * (0.01 + settings.ducking * 0.08);
+            let transient = (input_abs - self.previous_input_abs).max(0.0);
+            self.previous_input_abs = input_abs;
 
             let clock = self.clock.tick(transport_for_sample);
             transport_for_sample.song_pos_beats = None;
@@ -117,11 +125,15 @@ impl TensionFieldEngine {
             let grain = (settings.grain_continuity + mod_values[2]).clamp(0.0, 1.0);
             let width = (settings.width + mod_values[3]).clamp(0.0, 1.0);
             let warp_motion = (settings.warp_motion + mod_values[4]).clamp(0.0, 1.0);
-            let feedback = (settings.feedback + mod_values[5]).clamp(0.0, 0.7);
+            let tension_excite = (transient * (4.0 + tension * 7.0)).clamp(0.0, 1.0);
+            let warp_motion = (warp_motion + tension_excite * 0.22).clamp(0.0, 1.0);
+            let feedback =
+                (settings.feedback + mod_values[5] + tension_excite * 0.05).clamp(0.0, 0.7);
 
             let gesture = self.gesture.next(
                 GestureInput {
                     tension,
+                    tension_bias: settings.tension_bias,
                     time_mode: settings.time_mode,
                     pull_rate_hz: settings.pull_rate_hz,
                     pull_division: settings.pull_division,
@@ -131,6 +143,7 @@ impl TensionFieldEngine {
                     pull_latch: settings.pull_latch,
                     pull_quantize: settings.pull_quantize,
                     rebound: settings.rebound,
+                    release_snap: settings.release_snap,
                     pull_direction,
                     elasticity: settings.elasticity,
                 },
@@ -140,8 +153,8 @@ impl TensionFieldEngine {
             tension_peak = tension_peak.max(gesture.tension_drive);
 
             let duck_gain = 1.0 - settings.ducking * self.input_env.clamp(0.0, 1.0) * 0.85;
-            let feedback_l = self.feedback_left * feedback * duck_gain;
-            let feedback_r = self.feedback_right * feedback * duck_gain;
+            let feedback_l = self.feedback_left * feedback * duck_gain * self.safety_gain;
+            let feedback_r = self.feedback_right * feedback * duck_gain * self.safety_gain;
             feedback_peak = feedback_peak.max(feedback_l.abs().max(feedback_r.abs()));
 
             let pre_l = self
@@ -195,9 +208,24 @@ impl TensionFieldEngine {
             );
             space_peak = space_peak.max((space_l - warped_l).abs().max((space_r - warped_r).abs()));
 
+            let high_proxy = ((warped_l - elastic_l).abs() + (warped_r - elastic_r).abs()) * 0.5
+                + tension_excite * 0.2;
+            self.high_env += (high_proxy - self.high_env) * 0.02;
+            let energy = ((space_l * space_l + space_r * space_r) * 0.5).sqrt();
+            let energy_mix = energy * 0.65 + self.high_env * 0.35;
+            let threshold = lerp(0.2, 1.0, settings.energy_ceiling.clamp(0.0, 1.0));
+            let over = (energy_mix - threshold).max(0.0);
+            let target_safety = 1.0 / (1.0 + over * 2.6);
+            let safety_coeff = if target_safety < self.safety_gain {
+                0.07
+            } else {
+                0.004
+            };
+            self.safety_gain += (target_safety - self.safety_gain) * safety_coeff;
+
             self.output_gain += (db_to_gain(settings.output_trim_db) - self.output_gain) * 0.002;
-            let mut out_l = space_l * self.output_gain;
-            let mut out_r = space_r * self.output_gain;
+            let mut out_l = space_l * self.output_gain * self.safety_gain;
+            let mut out_r = space_r * self.output_gain * self.safety_gain;
             if settings.character == CharacterMode::Crush {
                 out_l = crush(out_l);
                 out_r = crush(out_r);
@@ -602,5 +630,74 @@ mod tests {
             assert!(left.iter().all(|sample| sample.is_finite()));
             assert!(right.iter().all(|sample| sample.is_finite()));
         }
+    }
+
+    #[test]
+    fn lower_energy_ceiling_reduces_peak_growth() {
+        let params = TensionFieldParams::new();
+        params.set_param(crate::params::PARAM_FEEDBACK_ID, 0.65);
+        params.set_param(crate::params::PARAM_CLEAN_DIRTY_ID, 2.0);
+        params.set_param(crate::params::PARAM_WARP_MOTION_ID, 0.8);
+        params.set_param(crate::params::PARAM_PULL_LATCH_ID, 1.0);
+
+        let mut strict_settings = params.settings();
+        strict_settings.energy_ceiling = 0.25;
+        let mut relaxed_settings = params.settings();
+        relaxed_settings.energy_ceiling = 1.0;
+
+        let mut strict_engine = TensionFieldEngine::new(48_000.0);
+        let mut relaxed_engine = TensionFieldEngine::new(48_000.0);
+
+        let mut strict_peak = 0.0_f32;
+        let mut relaxed_peak = 0.0_f32;
+
+        let mut strict_left = vec![0.0_f32; 1024];
+        let mut strict_right = vec![0.0_f32; 1024];
+        let mut relaxed_left = vec![0.0_f32; 1024];
+        let mut relaxed_right = vec![0.0_f32; 1024];
+        strict_left[0] = 1.0;
+        strict_right[0] = 1.0;
+        relaxed_left[0] = 1.0;
+        relaxed_right[0] = 1.0;
+
+        for _ in 0..32 {
+            let _ = strict_engine.render(
+                &strict_settings,
+                &mut strict_left,
+                &mut strict_right,
+                TransportState {
+                    tempo_bpm: 120.0,
+                    is_playing: true,
+                    song_pos_beats: None,
+                },
+            );
+            let _ = relaxed_engine.render(
+                &relaxed_settings,
+                &mut relaxed_left,
+                &mut relaxed_right,
+                TransportState {
+                    tempo_bpm: 120.0,
+                    is_playing: true,
+                    song_pos_beats: None,
+                },
+            );
+
+            strict_peak = strict_peak.max(
+                strict_left
+                    .iter()
+                    .chain(strict_right.iter())
+                    .map(|s| s.abs())
+                    .fold(0.0_f32, f32::max),
+            );
+            relaxed_peak = relaxed_peak.max(
+                relaxed_left
+                    .iter()
+                    .chain(relaxed_right.iter())
+                    .map(|s| s.abs())
+                    .fold(0.0_f32, f32::max),
+            );
+        }
+
+        assert!(strict_peak <= relaxed_peak + 1.0e-4);
     }
 }

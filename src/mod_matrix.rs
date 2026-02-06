@@ -81,14 +81,39 @@ impl ModMatrix {
 
         let mut destination_raw = [0.0; DEST_COUNT];
         for (index, raw) in destination_raw.iter_mut().enumerate() {
-            *raw = a * settings.route_depths[0][index] + b * settings.route_depths[1][index];
+            let combined =
+                a * settings.route_depths[0][index] + b * settings.route_depths[1][index];
+            *raw = destination_curve(index, combined);
         }
 
         for (index, raw) in destination_raw.iter().enumerate() {
-            self.smoothed[index] += (*raw - self.smoothed[index]) * 0.05;
+            let delta = *raw - self.smoothed[index];
+            let filtered_delta = if delta.abs() < 0.0005 { 0.0 } else { delta };
+            self.smoothed[index] += filtered_delta * destination_smoothing(index);
         }
 
         self.smoothed
+    }
+}
+
+fn destination_curve(index: usize, value: f32) -> f32 {
+    let clamped = value.clamp(-1.0, 1.0);
+    match index {
+        // Tension, Warp Motion, and Feedback use a softer mid-bias perceptual curve.
+        0 | 4 | 5 => clamped.signum() * clamped.abs().powf(0.75),
+        _ => clamped,
+    }
+}
+
+fn destination_smoothing(index: usize) -> f32 {
+    match index {
+        0 => 0.07, // Tension
+        1 => 0.06, // Direction
+        2 => 0.05, // Grain
+        3 => 0.05, // Width
+        4 => 0.08, // Warp motion
+        5 => 0.09, // Feedback
+        _ => 0.05,
     }
 }
 
