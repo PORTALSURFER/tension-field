@@ -17,14 +17,18 @@ use toybox::clack_extensions::gui::{
 };
 use toybox::clack_extensions::params::*;
 use toybox::clack_extensions::state::{PluginState, PluginStateImpl};
+use toybox::clack_plugin::events::event_types::{TransportEvent, TransportFlags};
 use toybox::clack_plugin::prelude::*;
 use toybox::clack_plugin::stream::{InputStream, OutputStream};
 use toybox::clap::automation::{AutomationDrainBuffer, AutomationQueue};
 use toybox::clap::params::apply_param_events;
 
+mod clock;
 mod dsp;
+mod gesture;
 #[cfg(target_os = "windows")]
 mod gui;
+mod mod_matrix;
 mod params;
 mod state;
 
@@ -459,7 +463,7 @@ impl<'a> PluginAudioProcessor<'a, TensionFieldShared, TensionFieldMainThread<'a>
 
     fn process(
         &mut self,
-        _process: Process,
+        process: Process,
         mut audio: Audio,
         events: Events,
     ) -> Result<ProcessStatus, PluginError> {
@@ -468,6 +472,7 @@ impl<'a> PluginAudioProcessor<'a, TensionFieldShared, TensionFieldMainThread<'a>
         });
 
         let settings = self.shared.params.settings();
+        let transport = transport_state_from_transport(process.transport.copied());
         for mut port_pair in &mut audio {
             let Some(mut channels) = port_pair.channels()?.into_f32() else {
                 continue;
@@ -481,7 +486,7 @@ impl<'a> PluginAudioProcessor<'a, TensionFieldShared, TensionFieldMainThread<'a>
                 continue;
             };
 
-            self.process_stereo_pair(left_pair, right_pair, &settings);
+            self.process_stereo_pair(left_pair, right_pair, &settings, transport);
         }
 
         let _ = self
@@ -498,6 +503,7 @@ impl TensionFieldAudioProcessor<'_> {
         left: ChannelPair<'_, f32>,
         right: ChannelPair<'_, f32>,
         settings: &params::TensionFieldSettings,
+        transport: clock::TransportState,
     ) {
         let (left_input, left_output, left_in_place) = split_channel(left);
         let (right_input, right_output, right_in_place) = split_channel(right);
@@ -545,6 +551,7 @@ impl TensionFieldAudioProcessor<'_> {
             settings,
             &mut self.scratch_left[..frames],
             &mut self.scratch_right[..frames],
+            transport,
         );
         self.shared.status.update(report);
 
@@ -580,6 +587,25 @@ impl PluginAudioProcessorParams for TensionFieldAudioProcessor<'_> {
         let _ = self
             .automation_drain
             .drain(&self.shared.automation_queue, output_parameter_changes);
+    }
+}
+
+fn transport_state_from_transport(transport: Option<TransportEvent>) -> clock::TransportState {
+    match transport {
+        Some(event) => clock::TransportState {
+            tempo_bpm: if event.flags.contains(TransportFlags::HAS_TEMPO) {
+                event.tempo as f32
+            } else {
+                120.0
+            },
+            is_playing: event.flags.contains(TransportFlags::IS_PLAYING),
+            song_pos_beats: if event.flags.contains(TransportFlags::HAS_BEATS_TIMELINE) {
+                Some(event.song_pos_beats.to_float())
+            } else {
+                None
+            },
+        },
+        None => clock::TransportState::default(),
     }
 }
 

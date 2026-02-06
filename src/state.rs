@@ -7,7 +7,7 @@ use crate::params::STATE_VALUE_COUNT;
 /// Four-byte magic marker for Tension Field state payloads (`TFST`).
 pub(crate) const STATE_MAGIC: u32 = u32::from_le_bytes(*b"TFST");
 /// Current state payload version.
-pub(crate) const STATE_VERSION: u32 = 1;
+pub(crate) const STATE_VERSION: u32 = 2;
 /// Number of persisted meter values.
 pub(crate) const METER_COUNT: usize = 9;
 
