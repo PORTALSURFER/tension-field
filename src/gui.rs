@@ -145,6 +145,41 @@ pub fn preferred_window_size(
     state.measure_window_size()
 }
 
+#[cfg(all(test, feature = "screenshot-test"))]
+mod screenshot_tests {
+    use std::sync::Arc;
+
+    use toybox::clap::automation::AutomationQueue;
+    use toybox::gui::{Size, screenshot_harness};
+
+    use super::{GuiState, GuiStatus, HostParamRequester, preferred_window_size};
+
+    #[test]
+    fn screenshot_renders_initial_ui() {
+        if !screenshot_harness::screenshots_enabled() {
+            return;
+        }
+
+        let params = Arc::new(crate::params::TensionFieldParams::new());
+        let status = Arc::new(GuiStatus::default());
+        let (base_w, base_h) = preferred_window_size(&params, &status);
+
+        let queue = Arc::new(AutomationQueue::default());
+        let param_requester: Option<HostParamRequester> = None;
+        let mut state = GuiState::new(params, queue, status, param_requester);
+
+        screenshot_harness::capture_initial_ui_screenshots_if_enabled(
+            env!("CARGO_PKG_NAME"),
+            Size {
+                width: base_w,
+                height: base_h,
+            },
+            |_input| state.build_spec(),
+        )
+        .expect("failed to capture tension_field headless screenshots");
+    }
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum ActiveTab {
     Perform,

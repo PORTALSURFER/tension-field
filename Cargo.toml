@@ -9,10 +9,14 @@ build = "build.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-toybox = { git = "https://github.com/PORTALSURFER/toybox" }
+toybox = { git = "https://github.com/PORTALSURFER/toybox.git", rev = "afbb137b601383fe51d1e60f0a9512e6e47e009b" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-toybox = { git = "https://github.com/PORTALSURFER/toybox", features = ["gui"] }
+toybox = { git = "https://github.com/PORTALSURFER/toybox.git", rev = "afbb137b601383fe51d1e60f0a9512e6e47e009b", features = ["gui"] }
 
 [build-dependencies]
-toybox = { git = "https://github.com/PORTALSURFER/toybox" }
+toybox = { git = "https://github.com/PORTALSURFER/toybox.git", rev = "afbb137b601383fe51d1e60f0a9512e6e47e009b" }
+
+[features]
+default = []
+screenshot-test = ["toybox/screenshot-test"]
