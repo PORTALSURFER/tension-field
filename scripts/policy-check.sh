@@ -155,4 +155,15 @@ if [ -n "${source_files}" ]; then
   fi
 fi
 
+# Strict slot-tree invariant checks are required for plugins that author UIs
+# with slot-layout helpers.
+if git ls-files --error-unmatch src/gui.rs >/dev/null 2>&1; then
+  strict_slot_helpers="$(grep -nE 'row_slots|column_slots|weighted_slot|fraction_slot|fill_slot' src/gui.rs || true)"
+  if [ -n "${strict_slot_helpers}" ]; then
+    if ! grep -q 'fn emitted_ui_spec_passes_strict_slot_validation' src/gui.rs; then
+      fail "src/gui.rs uses strict slot helpers and must include emitted_ui_spec_passes_strict_slot_validation to guard root->slot->container/widget invariants"
+    fi
+  fi
+fi
+
 echo "[policy] ok"
