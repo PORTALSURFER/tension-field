@@ -67,7 +67,7 @@ impl Plugin for TensionFieldPlugin {
 impl DefaultPluginFactory for TensionFieldPlugin {
     fn get_descriptor() -> PluginDescriptor {
         PluginDescriptor::new("com.portalsurfer.tensionfield", "Tension Field")
-            .with_vendor("Portalsurfer")
+            .with_vendor("PORTALSURFER")
             .with_version("0.1.0")
             .with_description("Elastic stretch and spectral drag audio effect")
             .with_features([plugin_features::AUDIO_EFFECT, plugin_features::STEREO])
