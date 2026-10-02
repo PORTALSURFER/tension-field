@@ -1,7 +1,8 @@
 # Tension Field
 
-Tension Field is a `toybox`-based CLAP audio effect focused on slow elastic
-motion for techno atmospheres, synth drones, and stretched tails.
+Tension Field is a `toybox`/Radiant-based macOS CLAP and VST3 audio effect
+focused on slow elastic motion for techno atmospheres, synth drones, and
+stretched tails.
 
 ## Concept
 
@@ -53,7 +54,10 @@ The plugin includes a fixed-size performance editor (`1280x860`) with tabbed wor
 - `Tone + Mod`: warp/character/space controls plus DSP mod-matrix source and route editing.
 - `Safety + Out`: feedback, ducking, energy ceiling, output trim, and stage meters with peak hold.
 
-The current `toybox` GUI backend is Windows-only, so GUI hosting is enabled on Windows builds and omitted on non-Windows targets. The modulation engine runs in DSP, so modulation remains active even when the GUI is closed.
+The editor uses Toybox's Radiant host on macOS only. It is a parented Cocoa
+view shared by the CLAP and VST3 adapters, with a retained 1280x860 surface;
+Windows and Linux builds remain unsupported/headless. The modulation engine
+runs in DSP, so modulation remains active even when the GUI is closed.
 
 ## Live Tension Recipes
 
@@ -75,6 +79,22 @@ The current `toybox` GUI backend is Windows-only, so GUI hosting is enabled on W
 ## Build
 
 ```bash
-cargo test
-cargo build --release
+cargo test --locked
+cargo test --locked --features screenshot-test gui::screenshot_tests -- --nocapture
+cargo build --locked --release --target aarch64-apple-darwin
+VST3_SDK_DIR=/path/to/vst3sdk bash scripts/ci.sh --vst3
 ```
+
+To create a local arm64 CLAP bundle for host testing:
+
+```bash
+DIST_DIR=/Users/portalsurfer/dev/audiodev/dist bash scripts/build-macos-test.sh
+VST3_SDK_DIR=/Users/portalsurfer/lib/vst3sdk \
+  DIST_DIR=/Users/portalsurfer/dev/audiodev/dist \
+  bash scripts/build-vst3-test.sh
+```
+
+Both bundles are arm64-only, ad-hoc signed, and not notarized. Fully unload
+any older Tension Field instance from the DAW before testing the new artifacts,
+then verify editor open/close, resize, gestures, host automation, audio, and
+audible behavior in the target host.

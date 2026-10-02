@@ -7,7 +7,7 @@ on:
 
 jobs:
   checks:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -16,6 +16,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+          targets: aarch64-apple-darwin
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -27,6 +28,21 @@ jobs:
       - name: Render UI screenshots (if supported)
         shell: bash
         run: bash scripts/ci.sh --screenshots
+
+      - name: Install pinned VST3 SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_dir="$RUNNER_TEMP/vst3sdk"
+          sdk_revision="58f8da7936800732561402d7936584ca4505de07"
+          git clone --quiet https://github.com/steinbergmedia/vst3sdk.git "$sdk_dir"
+          git -C "$sdk_dir" fetch --quiet --depth 1 origin "$sdk_revision"
+          git -C "$sdk_dir" checkout --quiet --detach "$sdk_revision"
+          echo "VST3_SDK_DIR=$sdk_dir" >> "$GITHUB_ENV"
+
+      - name: Run VST3 checks
+        shell: bash
+        run: bash scripts/ci.sh --vst3
 
       - name: Build screenshot manifest (optional)
         shell: bash
@@ -62,9 +78,24 @@ jobs:
           path: target/ui-screenshots
           if-no-files-found: ignore
 
-      - name: Lint VST3 feature (SDK optional)
-        if: ${{ vars.VST3_SDK_DIR != '' }}
-        env:
-          VST3_SDK_DIR: ${{ vars.VST3_SDK_DIR }}
+      - name: Build macOS CLAP test bundle
         shell: bash
-        run: bash scripts/ci.sh --vst3
+        run: DIST_DIR="$RUNNER_TEMP/tension-field-dist" bash scripts/build-macos-test.sh
+
+      - name: Upload macOS CLAP test bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: tension-field-macos-clap
+          path: ${{ runner.temp }}/tension-field-dist/tension_field-v0.1.0-macos.clap
+          if-no-files-found: error
+
+      - name: Build macOS VST3 test bundle
+        shell: bash
+        run: DIST_DIR="$RUNNER_TEMP/tension-field-dist" bash scripts/build-vst3-test.sh
+
+      - name: Upload macOS VST3 test bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: tension-field-macos-vst3
+          path: ${{ runner.temp }}/tension-field-dist/tension_field-v0.1.0-macos.vst3
+          if-no-files-found: error

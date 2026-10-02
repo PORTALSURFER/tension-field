@@ -256,6 +256,22 @@ impl TensionFieldEngine {
     }
 }
 
+impl RenderReport {
+    /// Merge one segmented render report using the largest activity per stage.
+    #[cfg(all(target_os = "macos", feature = "vst3"))]
+    pub(crate) fn merge_max(&mut self, other: Self) {
+        self.input_left = self.input_left.max(other.input_left);
+        self.input_right = self.input_right.max(other.input_right);
+        self.elastic_activity = self.elastic_activity.max(other.elastic_activity);
+        self.warp_activity = self.warp_activity.max(other.warp_activity);
+        self.space_activity = self.space_activity.max(other.space_activity);
+        self.feedback_activity = self.feedback_activity.max(other.feedback_activity);
+        self.output_left = self.output_left.max(other.output_left);
+        self.output_right = self.output_right.max(other.output_right);
+        self.tension_activity = self.tension_activity.max(other.tension_activity);
+    }
+}
+
 #[derive(Copy, Clone)]
 struct ElasticControl {
     delay_samples: f32,

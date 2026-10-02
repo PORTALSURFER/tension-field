@@ -833,7 +833,8 @@ impl TensionFieldParams {
 }
 
 /// Convert a pull-shape index to an internal shape value.
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "macos", feature = "radiant-gui"))]
+#[allow(dead_code)]
 pub(crate) fn pull_shape_value_from_index(index: usize) -> f32 {
     match index {
         1 => PullShape::Rubber.as_value(),
@@ -845,37 +846,43 @@ pub(crate) fn pull_shape_value_from_index(index: usize) -> f32 {
 }
 
 /// Convert a pull-division index to an internal division value.
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "macos", feature = "radiant-gui"))]
+#[allow(dead_code)]
 pub(crate) fn pull_division_value_from_index(index: usize) -> f32 {
     index.min(7) as f32
 }
 
 /// Convert a pull-quantize index to an internal quantize value.
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "macos", feature = "radiant-gui"))]
+#[allow(dead_code)]
 pub(crate) fn pull_quantize_value_from_index(index: usize) -> f32 {
     index.min(3) as f32
 }
 
 /// Convert a warp-color index to an internal color value.
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "macos", feature = "radiant-gui"))]
+#[allow(dead_code)]
 pub(crate) fn warp_color_value_from_index(index: usize) -> f32 {
     index.min(2) as f32
 }
 
 /// Convert a character-mode index to an internal mode value.
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "macos", feature = "radiant-gui"))]
+#[allow(dead_code)]
 pub(crate) fn character_mode_value_from_index(index: usize) -> f32 {
     index.min(2) as f32
 }
 
 /// Convert a modulation source shape index to an internal shape value.
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "macos", feature = "radiant-gui"))]
+#[allow(dead_code)]
 pub(crate) fn mod_source_shape_value_from_index(index: usize) -> f32 {
     index.min(3) as f32
 }
 
 /// Convert a modulation rate-mode index to an internal mode value.
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "macos", feature = "radiant-gui"))]
+#[allow(dead_code)]
 pub(crate) fn mod_rate_mode_value_from_index(index: usize) -> f32 {
     index.min(1) as f32
 }
@@ -883,6 +890,199 @@ pub(crate) fn mod_rate_mode_value_from_index(index: usize) -> f32 {
 /// Return the number of host-visible parameters.
 pub(crate) fn param_count() -> u32 {
     PARAM_DEFS.len() as u32
+}
+
+#[cfg(feature = "vst3")]
+/// Host-facing metadata for one VST3 parameter.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Vst3ParamInfo {
+    /// Stable numeric VST3 parameter identifier.
+    pub(crate) id: u32,
+    /// Long parameter title.
+    pub(crate) title: &'static str,
+    /// Short parameter title.
+    pub(crate) short_title: &'static str,
+    /// Host-facing unit label.
+    pub(crate) units: &'static str,
+    /// Number of discrete steps, or zero for continuous parameters.
+    pub(crate) step_count: i32,
+    /// Default value in normalized VST3 space.
+    pub(crate) default_normalized: f64,
+    /// Whether the parameter is the VST3 bypass parameter.
+    pub(crate) is_bypass: bool,
+}
+
+#[cfg(feature = "vst3")]
+const VST3_PARAM_TITLES: [&str; STATE_VALUE_COUNT] = [
+    "Tension",
+    "Pull Rate",
+    "Pull Shape",
+    "Hold",
+    "Grain",
+    "Pitch Coupling",
+    "Width",
+    "Diffusion",
+    "Air Damping",
+    "Air Comp",
+    "Direction",
+    "Elasticity",
+    "Pull",
+    "Rebound",
+    "Character",
+    "Feedback",
+    "Time Mode",
+    "Pull Division",
+    "Swing",
+    "Pull Latch",
+    "Pull Quant",
+    "Warp Color",
+    "Warp Motion",
+    "Ducking",
+    "Output Trim",
+    "Mod Run",
+    "Mod A Shape",
+    "Mod A Rate Mode",
+    "Mod A Rate",
+    "Mod A Div",
+    "Mod A Depth",
+    "Mod B Shape",
+    "Mod B Rate Mode",
+    "Mod B Rate",
+    "Mod B Div",
+    "Mod B Depth",
+    "A>Tension",
+    "A>Direction",
+    "A>Grain",
+    "A>Width",
+    "A>Warp Motion",
+    "A>Feedback",
+    "B>Tension",
+    "B>Direction",
+    "B>Grain",
+    "B>Width",
+    "B>Warp Motion",
+    "B>Feedback",
+    "Tension Bias",
+    "Release Snap",
+    "Energy Ceiling",
+];
+
+#[cfg(feature = "vst3")]
+fn vst3_units(param_id: ClapId) -> &'static str {
+    match param_id {
+        PARAM_PULL_RATE_ID | PARAM_MOD_A_RATE_HZ_ID | PARAM_MOD_B_RATE_HZ_ID => "Hz",
+        PARAM_OUTPUT_TRIM_DB_ID => "dB",
+        PARAM_MOD_A_TO_TENSION_ID
+        | PARAM_MOD_A_TO_DIRECTION_ID
+        | PARAM_MOD_A_TO_GRAIN_ID
+        | PARAM_MOD_A_TO_WIDTH_ID
+        | PARAM_MOD_A_TO_WARP_MOTION_ID
+        | PARAM_MOD_A_TO_FEEDBACK_ID
+        | PARAM_MOD_B_TO_TENSION_ID
+        | PARAM_MOD_B_TO_DIRECTION_ID
+        | PARAM_MOD_B_TO_GRAIN_ID
+        | PARAM_MOD_B_TO_WIDTH_ID
+        | PARAM_MOD_B_TO_WARP_MOTION_ID
+        | PARAM_MOD_B_TO_FEEDBACK_ID => "",
+        PARAM_PULL_SHAPE_ID
+        | PARAM_HOLD_ID
+        | PARAM_AIR_COMP_ID
+        | PARAM_PULL_TRIGGER_ID
+        | PARAM_CLEAN_DIRTY_ID
+        | PARAM_TIME_MODE_ID
+        | PARAM_PULL_DIVISION_ID
+        | PARAM_PULL_LATCH_ID
+        | PARAM_PULL_QUANTIZE_ID
+        | PARAM_WARP_COLOR_ID
+        | PARAM_MOD_RUN_ID
+        | PARAM_MOD_A_SHAPE_ID
+        | PARAM_MOD_A_RATE_MODE_ID
+        | PARAM_MOD_A_DIVISION_ID
+        | PARAM_MOD_B_SHAPE_ID
+        | PARAM_MOD_B_RATE_MODE_ID
+        | PARAM_MOD_B_DIVISION_ID => "",
+        _ => "%",
+    }
+}
+
+#[cfg(feature = "vst3")]
+fn vst3_param_def(param_id: u32) -> Option<ParamDef> {
+    PARAM_DEFS
+        .iter()
+        .copied()
+        .find(|def| def.id.get() == param_id)
+}
+
+#[cfg(feature = "vst3")]
+/// Resolve one stable VST3 numeric id to the shared CLAP id.
+pub(crate) fn clap_id_from_vst3_param_id(param_id: u32) -> Option<ClapId> {
+    vst3_param_def(param_id).map(|def| def.id)
+}
+
+#[cfg(feature = "vst3")]
+/// Convert a plain parameter value into normalized VST3 space.
+pub(crate) fn normalized_from_plain_value(param_id: ClapId, plain: f64) -> Option<f64> {
+    let def = PARAM_DEFS.iter().copied().find(|def| def.id == param_id)?;
+    if !plain.is_finite() {
+        return None;
+    }
+    let span = def.max_value - def.min_value;
+    if span <= f64::EPSILON {
+        return Some(0.0);
+    }
+    Some(((plain.clamp(def.min_value, def.max_value) - def.min_value) / span).clamp(0.0, 1.0))
+}
+
+#[cfg(feature = "vst3")]
+/// Convert a normalized VST3 value into a plain parameter value.
+pub(crate) fn plain_from_normalized_value(param_id: ClapId, normalized: f64) -> Option<f64> {
+    let def = PARAM_DEFS.iter().copied().find(|def| def.id == param_id)?;
+    if !normalized.is_finite() {
+        return None;
+    }
+    let plain = def.min_value + normalized.clamp(0.0, 1.0) * (def.max_value - def.min_value);
+    let flags = ParamInfoFlags::from_bits_truncate(def.flags);
+    Some(if flags.contains(ParamInfoFlags::IS_STEPPED) {
+        plain.round()
+    } else {
+        plain
+    })
+}
+
+#[cfg(feature = "vst3")]
+/// Apply a normalized VST3 value to shared parameter storage.
+pub(crate) fn apply_normalized_param_value(
+    params: &TensionFieldParams,
+    param_id: ClapId,
+    normalized: f64,
+) -> bool {
+    let Some(plain) = plain_from_normalized_value(param_id, normalized) else {
+        return false;
+    };
+    params.set_param(param_id, plain as f32);
+    true
+}
+
+#[cfg(feature = "vst3")]
+/// Return VST3 metadata for a parameter index.
+pub(crate) fn vst3_param_info_for_index(index: i32) -> Option<Vst3ParamInfo> {
+    let index = usize::try_from(index).ok()?;
+    let def = PARAM_DEFS.get(index).copied()?;
+    let flags = ParamInfoFlags::from_bits_truncate(def.flags);
+    let step_count = if flags.contains(ParamInfoFlags::IS_STEPPED) {
+        (def.max_value - def.min_value).round() as i32
+    } else {
+        0
+    };
+    Some(Vst3ParamInfo {
+        id: def.id.get(),
+        title: VST3_PARAM_TITLES[index],
+        short_title: VST3_PARAM_TITLES[index],
+        units: vst3_units(def.id),
+        step_count,
+        default_normalized: normalized_from_plain_value(def.id, def.default_value)?,
+        is_bypass: flags.contains(ParamInfoFlags::IS_BYPASS),
+    })
 }
 
 /// Number of serialized parameter values stored in plugin state.
@@ -927,6 +1127,11 @@ pub(crate) fn value_to_text(
     value: f64,
     writer: &mut ParamDisplayWriter,
 ) -> std::fmt::Result {
+    write!(writer, "{}", format_value_text(param_id, value))
+}
+
+/// Format a parameter value for the host controller and tests.
+pub(crate) fn format_value_text(param_id: ClapId, value: f64) -> String {
     match param_id {
         PARAM_TENSION_ID
         | PARAM_TENSION_BIAS_ID
@@ -944,35 +1149,23 @@ pub(crate) fn value_to_text(
         | PARAM_DUCKING_ID
         | PARAM_ENERGY_CEILING_ID
         | PARAM_MOD_A_DEPTH_ID
-        | PARAM_MOD_B_DEPTH_ID => write!(writer, "{:.0}%", value * 100.0),
+        | PARAM_MOD_B_DEPTH_ID => format!("{:.0}%", value * 100.0),
         PARAM_PULL_RATE_ID | PARAM_MOD_A_RATE_HZ_ID | PARAM_MOD_B_RATE_HZ_ID => {
-            write!(writer, "{value:.2} Hz")
+            format!("{value:.2} Hz")
         }
-        PARAM_PULL_SHAPE_ID => write!(writer, "{}", PullShape::from_value(value as f32).label()),
-        PARAM_TIME_MODE_ID => write!(writer, "{}", TimeMode::from_value(value as f32).label()),
+        PARAM_PULL_SHAPE_ID => PullShape::from_value(value as f32).label().to_string(),
+        PARAM_TIME_MODE_ID => TimeMode::from_value(value as f32).label().to_string(),
         PARAM_PULL_DIVISION_ID | PARAM_MOD_A_DIVISION_ID | PARAM_MOD_B_DIVISION_ID => {
-            write!(writer, "{}", PullDivision::from_value(value as f32).label())
+            PullDivision::from_value(value as f32).label().to_string()
         }
-        PARAM_PULL_QUANTIZE_ID => {
-            write!(writer, "{}", PullQuantize::from_value(value as f32).label())
-        }
-        PARAM_WARP_COLOR_ID => write!(writer, "{}", WarpColor::from_value(value as f32).label()),
-        PARAM_CLEAN_DIRTY_ID => {
-            write!(
-                writer,
-                "{}",
-                CharacterMode::from_value(value as f32).label()
-            )
-        }
+        PARAM_PULL_QUANTIZE_ID => PullQuantize::from_value(value as f32).label().to_string(),
+        PARAM_WARP_COLOR_ID => WarpColor::from_value(value as f32).label().to_string(),
+        PARAM_CLEAN_DIRTY_ID => CharacterMode::from_value(value as f32).label().to_string(),
         PARAM_MOD_A_SHAPE_ID | PARAM_MOD_B_SHAPE_ID => {
-            write!(
-                writer,
-                "{}",
-                ModSourceShape::from_value(value as f32).label()
-            )
+            ModSourceShape::from_value(value as f32).label().to_string()
         }
         PARAM_MOD_A_RATE_MODE_ID | PARAM_MOD_B_RATE_MODE_ID => {
-            write!(writer, "{}", ModRateMode::from_value(value as f32).label())
+            ModRateMode::from_value(value as f32).label().to_string()
         }
         PARAM_HOLD_ID
         | PARAM_AIR_COMP_ID
@@ -980,16 +1173,16 @@ pub(crate) fn value_to_text(
         | PARAM_PULL_LATCH_ID
         | PARAM_MOD_RUN_ID => {
             if value >= 0.5 {
-                write!(writer, "On")
+                "On".to_string()
             } else {
-                write!(writer, "Off")
+                "Off".to_string()
             }
         }
         PARAM_PULL_DIRECTION_ID => {
             let bipolar = value as f32 * 2.0 - 1.0;
-            write!(writer, "{bipolar:+.2}")
+            format!("{bipolar:+.2}")
         }
-        PARAM_OUTPUT_TRIM_DB_ID => write!(writer, "{value:+.1} dB"),
+        PARAM_OUTPUT_TRIM_DB_ID => format!("{value:+.1} dB"),
         PARAM_MOD_A_TO_TENSION_ID
         | PARAM_MOD_A_TO_DIRECTION_ID
         | PARAM_MOD_A_TO_GRAIN_ID
@@ -1001,8 +1194,8 @@ pub(crate) fn value_to_text(
         | PARAM_MOD_B_TO_GRAIN_ID
         | PARAM_MOD_B_TO_WIDTH_ID
         | PARAM_MOD_B_TO_WARP_MOTION_ID
-        | PARAM_MOD_B_TO_FEEDBACK_ID => write!(writer, "{value:+.2}"),
-        _ => write!(writer, "{value:.2}"),
+        | PARAM_MOD_B_TO_FEEDBACK_ID => format!("{value:+.2}"),
+        _ => format!("{value:.2}"),
     }
 }
 
@@ -1161,31 +1354,39 @@ pub(crate) const PARAM_RELEASE_SNAP_ID: ClapId = ClapId::new(50);
 pub(crate) const PARAM_ENERGY_CEILING_ID: ClapId = ClapId::new(51);
 
 /// Pull-shape labels used by the editor dropdown.
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "macos", feature = "radiant-gui"))]
+#[allow(dead_code)]
 pub(crate) const PULL_SHAPE_LABELS: [&str; 5] = ["Linear", "Rubber", "Ratchet", "Wave", "Pulse"];
 /// Time-mode labels used by the editor dropdown.
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "macos", feature = "radiant-gui"))]
+#[allow(dead_code)]
 pub(crate) const TIME_MODE_LABELS: [&str; 2] = ["Free Hz", "Sync Div"];
 /// Pull-division labels used by the editor dropdown.
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "macos", feature = "radiant-gui"))]
+#[allow(dead_code)]
 pub(crate) const PULL_DIVISION_LABELS: [&str; 8] = [
     "1/16", "1/8T", "1/8", "1/4T", "1/4", "1/2", "1 Bar", "2 Bar",
 ];
 /// Pull-quantize labels used by the editor dropdown.
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "macos", feature = "radiant-gui"))]
+#[allow(dead_code)]
 pub(crate) const PULL_QUANTIZE_LABELS: [&str; 4] = ["None", "1/16", "1/8", "1/4"];
 /// Warp-color labels used by the editor dropdown.
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "macos", feature = "radiant-gui"))]
+#[allow(dead_code)]
 pub(crate) const WARP_COLOR_LABELS: [&str; 3] = ["Neutral", "Dark Drag", "Bright Shear"];
 /// Character labels used by the editor dropdown.
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "macos", feature = "radiant-gui"))]
+#[allow(dead_code)]
 pub(crate) const CHARACTER_LABELS: [&str; 3] = ["Clean", "Dirty", "Crush"];
 /// Mod source shape labels used by the editor dropdown.
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "macos", feature = "radiant-gui"))]
+#[allow(dead_code)]
 pub(crate) const MOD_SOURCE_SHAPE_LABELS: [&str; 4] =
     ["Sine", "Triangle", "Random Walk", "Envelope"];
 /// Mod rate mode labels used by the editor dropdown.
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "macos", feature = "radiant-gui"))]
+#[allow(dead_code)]
 pub(crate) const MOD_RATE_MODE_LABELS: [&str; 2] = ["Free Hz", "Sync Div"];
 
 #[derive(Copy, Clone)]
@@ -1732,6 +1933,11 @@ mod tests {
         CharacterMode, ModRateMode, ModSourceShape, PullDivision, PullQuantize, PullShape,
         TimeMode, WarpColor, parse_toggle,
     };
+    #[cfg(feature = "vst3")]
+    use super::{
+        PARAM_DEFS, STATE_VALUE_COUNT, clap_id_from_vst3_param_id, param_count,
+        plain_from_normalized_value, vst3_param_info_for_index,
+    };
 
     #[test]
     fn pull_shape_parse_handles_names_and_indexes() {
@@ -1758,5 +1964,21 @@ mod tests {
         assert_eq!(CharacterMode::parse("crush"), Some(CharacterMode::Crush));
         assert_eq!(ModSourceShape::parse("env"), Some(ModSourceShape::Envelope));
         assert_eq!(ModRateMode::parse("hz"), Some(ModRateMode::FreeHz));
+    }
+
+    #[cfg(feature = "vst3")]
+    #[test]
+    fn vst3_metadata_covers_every_shared_parameter() {
+        assert_eq!(param_count() as usize, STATE_VALUE_COUNT);
+        for (index, def) in PARAM_DEFS.iter().enumerate() {
+            let info = vst3_param_info_for_index(index as i32).expect("VST3 metadata");
+            assert_eq!(info.id, index as u32 + 1);
+            assert_eq!(clap_id_from_vst3_param_id(info.id), Some(def.id));
+            assert!((0.0..=1.0).contains(&info.default_normalized));
+            let plain = plain_from_normalized_value(def.id, info.default_normalized)
+                .expect("default plain value");
+            assert!(plain.is_finite());
+            assert!((def.min_value..=def.max_value).contains(&plain));
+        }
     }
 }

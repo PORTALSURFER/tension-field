@@ -11,10 +11,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use toybox::clack_common::plugin::features as plugin_features;
 use toybox::clack_extensions::audio_ports::*;
-#[cfg(target_os = "windows")]
-use toybox::clack_extensions::gui::{
-    GuiApiType, GuiConfiguration, GuiSize, PluginGui, PluginGuiImpl, Window,
-};
+#[cfg(all(target_os = "macos", feature = "radiant-gui"))]
+use toybox::clack_extensions::gui::{PluginGui, PluginGuiImpl};
 use toybox::clack_extensions::params::*;
 use toybox::clack_extensions::state::{PluginState, PluginStateImpl};
 use toybox::clack_plugin::events::event_types::{TransportEvent, TransportFlags};
@@ -26,20 +24,20 @@ use toybox::clap::params::apply_param_events;
 mod clock;
 mod dsp;
 mod gesture;
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "macos", feature = "radiant-gui"))]
 mod gui;
 mod mod_matrix;
 mod params;
 mod state;
+#[cfg(all(target_os = "macos", feature = "vst3"))]
+mod vst3;
 
-use dsp::{RenderReport, TensionFieldEngine};
-#[cfg(target_os = "windows")]
-use gui::TensionFieldGui;
-use params::{
+pub(crate) use dsp::{RenderReport, TensionFieldEngine};
+pub(crate) use params::{
     TensionFieldParams, apply_state_values, param_count, state_values, text_to_value,
     value_to_text, write_param_info,
 };
-use state::{PluginStateSnapshot, read_snapshot, write_snapshot};
+pub(crate) use state::{PluginStateSnapshot, read_snapshot, write_snapshot};
 
 /// CLAP plugin type for Tension Field.
 pub struct TensionFieldPlugin;
@@ -57,7 +55,7 @@ impl Plugin for TensionFieldPlugin {
             .register::<PluginAudioPorts>()
             .register::<PluginParams>()
             .register::<PluginState>();
-        #[cfg(target_os = "windows")]
+        #[cfg(all(target_os = "macos", feature = "radiant-gui"))]
         {
             builder.register::<PluginGui>();
         }
@@ -85,18 +83,21 @@ impl DefaultPluginFactory for TensionFieldPlugin {
         host: HostMainThreadHandle<'a>,
         shared: &'a Self::Shared<'a>,
     ) -> Result<Self::MainThread<'a>, PluginError> {
-        #[cfg(target_os = "windows")]
+        #[cfg(all(target_os = "macos", feature = "radiant-gui"))]
         {
-            let (width, height) = gui::preferred_window_size(&shared.params, &shared.status);
+            let param_requester = host_param_requester(host.shared());
             Ok(TensionFieldMainThread {
                 shared,
-                host: host.shared(),
-                gui_size: GuiSize { width, height },
-                gui: TensionFieldGui::default(),
+                gui: gui::new_gui(
+                    Arc::clone(&shared.params),
+                    Arc::clone(&shared.automation_queue),
+                    Arc::clone(&shared.status),
+                    param_requester,
+                ),
                 automation_drain: AutomationDrainBuffer::default(),
             })
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(not(all(target_os = "macos", feature = "radiant-gui")))]
         {
             let _ = host;
             Ok(TensionFieldMainThread {
@@ -141,51 +142,6 @@ impl GuiStatus {
             .store(f32_to_bits(report.output_right), Ordering::Relaxed);
         self.tension_activity
             .store(f32_to_bits(report.tension_activity), Ordering::Relaxed);
-    }
-
-    #[cfg(target_os = "windows")]
-    pub(crate) fn input_left(&self) -> f32 {
-        bits_to_f32(self.input_left.load(Ordering::Relaxed))
-    }
-
-    #[cfg(target_os = "windows")]
-    pub(crate) fn input_right(&self) -> f32 {
-        bits_to_f32(self.input_right.load(Ordering::Relaxed))
-    }
-
-    #[cfg(target_os = "windows")]
-    pub(crate) fn elastic_activity(&self) -> f32 {
-        bits_to_f32(self.elastic_activity.load(Ordering::Relaxed))
-    }
-
-    #[cfg(target_os = "windows")]
-    pub(crate) fn warp_activity(&self) -> f32 {
-        bits_to_f32(self.warp_activity.load(Ordering::Relaxed))
-    }
-
-    #[cfg(target_os = "windows")]
-    pub(crate) fn space_activity(&self) -> f32 {
-        bits_to_f32(self.space_activity.load(Ordering::Relaxed))
-    }
-
-    #[cfg(target_os = "windows")]
-    pub(crate) fn feedback_activity(&self) -> f32 {
-        bits_to_f32(self.feedback_activity.load(Ordering::Relaxed))
-    }
-
-    #[cfg(target_os = "windows")]
-    pub(crate) fn output_left(&self) -> f32 {
-        bits_to_f32(self.output_left.load(Ordering::Relaxed))
-    }
-
-    #[cfg(target_os = "windows")]
-    pub(crate) fn output_right(&self) -> f32 {
-        bits_to_f32(self.output_right.load(Ordering::Relaxed))
-    }
-
-    #[cfg(target_os = "windows")]
-    pub(crate) fn tension_activity(&self) -> f32 {
-        bits_to_f32(self.tension_activity.load(Ordering::Relaxed))
     }
 
     fn snapshot(&self) -> [f32; state::METER_COUNT] {
@@ -237,14 +193,14 @@ pub struct TensionFieldShared {
 impl PluginShared<'_> for TensionFieldShared {}
 
 /// Helper for requesting parameter flushes from the GUI thread.
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "macos", feature = "radiant-gui"))]
 #[derive(Clone, Copy)]
 pub(crate) struct HostParamRequester {
     host: HostSharedHandle<'static>,
     params: HostParams,
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "macos", feature = "radiant-gui"))]
 impl HostParamRequester {
     /// Request a host parameter flush.
     pub fn request_flush(self) {
@@ -252,7 +208,7 @@ impl HostParamRequester {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "macos", feature = "radiant-gui"))]
 fn host_param_requester(host: HostSharedHandle<'_>) -> Option<HostParamRequester> {
     let params = host.get_extension::<HostParams>()?;
     let host =
@@ -263,12 +219,8 @@ fn host_param_requester(host: HostSharedHandle<'_>) -> Option<HostParamRequester
 /// Main-thread state for host interaction and GUI hosting.
 pub struct TensionFieldMainThread<'a> {
     shared: &'a TensionFieldShared,
-    #[cfg(target_os = "windows")]
-    host: HostSharedHandle<'a>,
-    #[cfg(target_os = "windows")]
-    gui_size: GuiSize,
-    #[cfg(target_os = "windows")]
-    gui: TensionFieldGui,
+    #[cfg(all(target_os = "macos", feature = "radiant-gui"))]
+    gui: toybox::radiant_gui::RadiantHostedGui,
     automation_drain: AutomationDrainBuffer,
 }
 
@@ -357,81 +309,13 @@ impl PluginStateImpl for TensionFieldMainThread<'_> {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "macos", feature = "radiant-gui"))]
 impl PluginGuiImpl for TensionFieldMainThread<'_> {
-    fn is_api_supported(&mut self, configuration: GuiConfiguration) -> bool {
-        configuration.api_type
-            == GuiApiType::default_for_current_platform().expect("Unsupported platform")
-            && !configuration.is_floating
-    }
-
-    fn get_preferred_api(&'_ mut self) -> Option<GuiConfiguration<'_>> {
-        Some(GuiConfiguration {
-            api_type: GuiApiType::default_for_current_platform().expect("Unsupported platform"),
-            is_floating: false,
-        })
-    }
-
-    fn create(&mut self, _configuration: GuiConfiguration) -> Result<(), PluginError> {
-        Ok(())
-    }
-
-    fn destroy(&mut self) {
-        self.gui.close();
-    }
-
-    fn set_scale(&mut self, _scale: f64) -> Result<(), PluginError> {
-        Ok(())
-    }
-
-    fn set_parent(&mut self, window: Window<'_>) -> Result<(), PluginError> {
-        self.gui.set_parent(window);
-        Ok(())
-    }
-
-    fn set_transient(&mut self, _window: Window<'_>) -> Result<(), PluginError> {
-        Ok(())
-    }
-
-    fn show(&mut self) -> Result<(), PluginError> {
-        let result = self.gui.open(
-            &self.shared.params,
-            Arc::clone(&self.shared.automation_queue),
-            Arc::clone(&self.shared.status),
-            host_param_requester(self.host),
-        );
-        if let Some((width, height)) = self.gui.last_size() {
-            self.gui_size = GuiSize { width, height };
-        } else {
-            let (width, height) =
-                gui::preferred_window_size(&self.shared.params, &self.shared.status);
-            self.gui_size = GuiSize { width, height };
-        }
-        result
-    }
-
-    fn hide(&mut self) -> Result<(), PluginError> {
-        self.gui.close();
-        Ok(())
-    }
-
-    fn get_size(&mut self) -> Option<GuiSize> {
-        if let Some((width, height)) = self.gui.last_size() {
-            self.gui_size = GuiSize { width, height };
-        }
-        Some(self.gui_size)
-    }
-
-    fn can_resize(&mut self) -> bool {
-        true
-    }
-
-    fn set_size(&mut self, size: GuiSize) -> Result<(), PluginError> {
-        self.gui_size = size;
-        self.gui
-            .request_resize(size.width.max(1), size.height.max(1));
-        Ok(())
-    }
+    toybox::radiant_clap_gui_callbacks!(
+        gui = gui,
+        preferred_size = gui::preferred_window_size,
+        show = |_main_thread| Ok(())
+    );
 }
 
 /// Audio-thread processor for Tension Field.
@@ -555,12 +439,10 @@ impl TensionFieldAudioProcessor<'_> {
         );
         self.shared.status.update(report);
 
-        let mut left_output = left_output;
-        let mut right_output = right_output;
-        if let Some(out_left) = left_output.as_deref_mut() {
+        if let Some(out_left) = left_output {
             out_left[..frames].copy_from_slice(&self.scratch_left[..frames]);
         }
-        if let Some(out_right) = right_output.as_deref_mut() {
+        if let Some(out_right) = right_output {
             out_right[..frames].copy_from_slice(&self.scratch_right[..frames]);
         }
     }

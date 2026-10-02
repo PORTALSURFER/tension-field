@@ -3,20 +3,17 @@ name = "tension_field"
 version = "0.1.0"
 edition = "2024"
 publish = false
-build = "build.rs"
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-toybox = { git = "https://github.com/PORTALSURFER/toybox.git", rev = "afbb137b601383fe51d1e60f0a9512e6e47e009b" }
-
-[target.'cfg(target_os = "windows")'.dependencies]
-toybox = { git = "https://github.com/PORTALSURFER/toybox.git", rev = "afbb137b601383fe51d1e60f0a9512e6e47e009b", features = ["gui"] }
-
-[build-dependencies]
-toybox = { git = "https://github.com/PORTALSURFER/toybox.git", rev = "afbb137b601383fe51d1e60f0a9512e6e47e009b" }
+toybox = { git = "https://github.com/PORTALSURFER/toybox.git", rev = "4f86012c17429195e66c24a89e20389aadd8e1de", default-features = false }
+radiant = { git = "https://github.com/PORTALSURFER/radiant.git", rev = "8cbcd7ea76f8c6d9408734cb4a8f446f77a02fa4", default-features = false, optional = true }
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 
 [features]
-default = []
-screenshot-test = ["toybox/screenshot-test"]
+default = ["radiant-gui"]
+radiant-gui = ["toybox/radiant-gui", "dep:radiant"]
+vst3 = ["toybox/radiant-vst3", "radiant-gui"]
+screenshot-test = ["dep:image", "radiant-gui"]

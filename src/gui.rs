@@ -1,186 +1,254 @@
-//! Tabbed performance UI for the Tension Field plugin.
+//! Radiant editor for the macOS-only Tension Field CLAP and VST3 views.
+//!
+//! The editor deliberately keeps the audio-facing parameter and automation
+//! objects owned by the plug-in. Radiant owns only the retained view and
+//! forwards UI gestures back through the existing `AutomationQueue`.
 
 use std::sync::Arc;
 use std::time::Instant;
 
-use toybox::clack_extensions::gui::Window;
-use toybox::clack_plugin::plugin::PluginError;
+use radiant::gui::types::{Rect, Vector2};
+use radiant::layout::LayoutOutput;
+use radiant::prelude::{
+    IntoView, KnobMessage, button, column, custom_widget_mapped, knob, row, text, toggle,
+};
+use radiant::runtime::PaintPrimitive;
+use radiant::runtime::{DeclarativeSurfaceRuntime, Event, SurfacePaintPlan, UiSurface};
+use radiant::theme::ThemeTokens;
+use radiant::widgets::{
+    ButtonMessage, ButtonWidget, DragHandleMessage, PointerButton, Widget, WidgetCapabilities,
+    WidgetCommon, WidgetInput, WidgetKey, WidgetOutput, WidgetSizing,
+};
 use toybox::clack_plugin::utils::ClapId;
 use toybox::clap::automation::{AutomationConfig, AutomationQueue};
-use toybox::clap::gui::GuiHostWindow;
-use toybox::gui::declarative::{
-    Align, ButtonEvent, ButtonSpec, DropdownEvent, DropdownSpec, FlexSpec, KnobEvent, KnobSpec,
-    LabelSpec, Node, Padding, PanelSpec, RegionSpec, RootFrameSpec, SizeSpec, ToggleEvent,
-    ToggleSpec, UiSpec, WidgetSpec, measure,
-};
-use toybox::gui::{Color, Point, Rect, Size, Theme};
-use toybox::patchbay_gui::Ui;
-use toybox::raw_window_handle::HasRawWindowHandle;
 
 use crate::params::{
-    CHARACTER_LABELS, MOD_RATE_MODE_LABELS, MOD_SOURCE_SHAPE_LABELS, PARAM_AIR_COMP_ID,
-    PARAM_AIR_DAMPING_ID, PARAM_CLEAN_DIRTY_ID, PARAM_DIFFUSION_ID, PARAM_DUCKING_ID,
-    PARAM_ELASTICITY_ID, PARAM_ENERGY_CEILING_ID, PARAM_FEEDBACK_ID, PARAM_GRAIN_CONTINUITY_ID,
-    PARAM_HOLD_ID, PARAM_MOD_A_DEPTH_ID, PARAM_MOD_A_DIVISION_ID, PARAM_MOD_A_RATE_HZ_ID,
-    PARAM_MOD_A_RATE_MODE_ID, PARAM_MOD_A_SHAPE_ID, PARAM_MOD_A_TO_DIRECTION_ID,
-    PARAM_MOD_A_TO_FEEDBACK_ID, PARAM_MOD_A_TO_GRAIN_ID, PARAM_MOD_A_TO_TENSION_ID,
-    PARAM_MOD_A_TO_WARP_MOTION_ID, PARAM_MOD_A_TO_WIDTH_ID, PARAM_MOD_B_DEPTH_ID,
-    PARAM_MOD_B_DIVISION_ID, PARAM_MOD_B_RATE_HZ_ID, PARAM_MOD_B_RATE_MODE_ID,
-    PARAM_MOD_B_SHAPE_ID, PARAM_MOD_B_TO_DIRECTION_ID, PARAM_MOD_B_TO_FEEDBACK_ID,
-    PARAM_MOD_B_TO_GRAIN_ID, PARAM_MOD_B_TO_TENSION_ID, PARAM_MOD_B_TO_WARP_MOTION_ID,
-    PARAM_MOD_B_TO_WIDTH_ID, PARAM_MOD_RUN_ID, PARAM_OUTPUT_TRIM_DB_ID, PARAM_PITCH_COUPLING_ID,
-    PARAM_PULL_DIRECTION_ID, PARAM_PULL_DIVISION_ID, PARAM_PULL_LATCH_ID, PARAM_PULL_QUANTIZE_ID,
-    PARAM_PULL_RATE_ID, PARAM_PULL_SHAPE_ID, PARAM_PULL_TRIGGER_ID, PARAM_REBOUND_ID,
-    PARAM_RELEASE_SNAP_ID, PARAM_SWING_ID, PARAM_TENSION_BIAS_ID, PARAM_TENSION_ID,
-    PARAM_TIME_MODE_ID, PARAM_WARP_COLOR_ID, PARAM_WARP_MOTION_ID, PARAM_WIDTH_ID,
-    PULL_DIVISION_LABELS, PULL_QUANTIZE_LABELS, PULL_SHAPE_LABELS, TIME_MODE_LABELS,
-    WARP_COLOR_LABELS, character_mode_value_from_index, mod_rate_mode_value_from_index,
-    mod_source_shape_value_from_index, pull_division_value_from_index,
-    pull_quantize_value_from_index, pull_shape_value_from_index, warp_color_value_from_index,
+    PARAM_AIR_COMP_ID, PARAM_AIR_DAMPING_ID, PARAM_CLEAN_DIRTY_ID, PARAM_DIFFUSION_ID,
+    PARAM_DUCKING_ID, PARAM_ELASTICITY_ID, PARAM_ENERGY_CEILING_ID, PARAM_FEEDBACK_ID,
+    PARAM_GRAIN_CONTINUITY_ID, PARAM_HOLD_ID, PARAM_MOD_A_DEPTH_ID, PARAM_MOD_A_DIVISION_ID,
+    PARAM_MOD_A_RATE_HZ_ID, PARAM_MOD_A_RATE_MODE_ID, PARAM_MOD_A_SHAPE_ID,
+    PARAM_MOD_A_TO_DIRECTION_ID, PARAM_MOD_A_TO_FEEDBACK_ID, PARAM_MOD_A_TO_GRAIN_ID,
+    PARAM_MOD_A_TO_TENSION_ID, PARAM_MOD_A_TO_WARP_MOTION_ID, PARAM_MOD_A_TO_WIDTH_ID,
+    PARAM_MOD_B_DEPTH_ID, PARAM_MOD_B_DIVISION_ID, PARAM_MOD_B_RATE_HZ_ID,
+    PARAM_MOD_B_RATE_MODE_ID, PARAM_MOD_B_SHAPE_ID, PARAM_MOD_B_TO_DIRECTION_ID,
+    PARAM_MOD_B_TO_FEEDBACK_ID, PARAM_MOD_B_TO_GRAIN_ID, PARAM_MOD_B_TO_TENSION_ID,
+    PARAM_MOD_B_TO_WARP_MOTION_ID, PARAM_MOD_B_TO_WIDTH_ID, PARAM_MOD_RUN_ID,
+    PARAM_OUTPUT_TRIM_DB_ID, PARAM_PITCH_COUPLING_ID, PARAM_PULL_DIRECTION_ID,
+    PARAM_PULL_DIVISION_ID, PARAM_PULL_LATCH_ID, PARAM_PULL_QUANTIZE_ID, PARAM_PULL_RATE_ID,
+    PARAM_PULL_SHAPE_ID, PARAM_PULL_TRIGGER_ID, PARAM_REBOUND_ID, PARAM_RELEASE_SNAP_ID,
+    PARAM_SWING_ID, PARAM_TENSION_BIAS_ID, PARAM_TENSION_ID, PARAM_TIME_MODE_ID,
+    PARAM_WARP_COLOR_ID, PARAM_WARP_MOTION_ID, PARAM_WIDTH_ID,
 };
 use crate::{GuiStatus, HostParamRequester};
 
-const ROOT_PADDING_X: i32 = 14;
-const ROOT_PADDING_Y: i32 = 12;
-const PANEL_GAP: i32 = 12;
-const CONTROL_GAP: i32 = 8;
-const BUTTON_WIDTH: u32 = 124;
-const BUTTON_HEIGHT: u32 = 24;
-const TOGGLE_W: u32 = 60;
-const TOGGLE_H: u32 = 18;
-const DROPDOWN_W: u32 = 160;
-const DROPDOWN_H: u32 = 22;
-const MAP_WIDTH: u32 = 620;
-const MAP_HEIGHT: u32 = 360;
-const METER_CELL_W: u32 = 72;
-const METER_CELL_H: u32 = 96;
-
-const BG: Color = Color::rgb(16, 20, 26);
-const PANEL_BG: Color = Color::rgb(25, 30, 39);
-const PANEL_BORDER: Color = Color::rgb(58, 67, 82);
-const TITLE: Color = Color::rgb(220, 225, 236);
-const SUBTITLE: Color = Color::rgb(134, 150, 178);
-const ACCENT: Color = Color::rgb(235, 192, 120);
-const TAB_ACTIVE: Color = Color::rgb(78, 111, 170);
-const TAB_INACTIVE: Color = Color::rgb(43, 51, 66);
-const MAP_LINE: Color = Color::rgb(98, 182, 255);
-const MAP_TRACE: Color = Color::rgba(132, 201, 255, 120);
-const MAP_DOT: Color = Color::rgb(247, 217, 143);
-const METER_FILL: Color = Color::rgb(99, 210, 188);
-const METER_WARN: Color = Color::rgb(228, 148, 112);
-const METER_HOLD: Color = Color::rgb(250, 234, 158);
-
-/// GUI window manager for Tension Field.
-#[derive(Default)]
-pub struct TensionFieldGui {
-    window: GuiHostWindow,
-    is_open: bool,
+/// Format-neutral host automation sink used by the retained editor.
+///
+/// The CLAP editor leaves this unset and uses its existing
+/// `AutomationQueue`/flush path. VST3 supplies a sink that forwards the same
+/// ordered gesture phases to `IComponentHandler`.
+pub(crate) trait HostParamEditSink: Send + Sync {
+    /// Begin a host gesture for one parameter.
+    fn gesture_started(&self, config: &AutomationConfig, param_id: ClapId);
+    /// Deliver one plain parameter value during a host gesture.
+    fn gesture_value(&self, config: &AutomationConfig, param_id: ClapId, value: f64);
+    /// End a host gesture for one parameter.
+    fn gesture_ended(&self, config: &AutomationConfig, param_id: ClapId);
 }
 
-impl TensionFieldGui {
-    /// Attach the host parent window.
-    pub fn set_parent(&mut self, window: Window<'_>) {
-        self.window.set_parent(window.raw_window_handle());
+/// Preferred logical width of the retained editor.
+pub(crate) const WINDOW_WIDTH: u32 = 1280;
+/// Preferred logical height of the retained editor.
+pub(crate) const WINDOW_HEIGHT: u32 = 860;
+pub(crate) const MIN_WINDOW_WIDTH: u32 = 960;
+pub(crate) const MIN_WINDOW_HEIGHT: u32 = 640;
+pub(crate) const MAX_WINDOW_WIDTH: u32 = 1920;
+pub(crate) const MAX_WINDOW_HEIGHT: u32 = 1280;
+const MAP_WIDTH: f32 = 620.0;
+const MAP_HEIGHT: f32 = 160.0;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum TensionMapOutput {
+    Drag(DragHandleMessage),
+}
+
+#[derive(Clone, Debug)]
+struct TensionMapWidget {
+    button: ButtonWidget,
+    gesture_started: bool,
+}
+
+impl TensionMapWidget {
+    fn new() -> Self {
+        Self {
+            button: ButtonWidget::new(
+                0,
+                "TENSION MAP  ·  drag / double-click reset",
+                WidgetSizing::fixed(Vector2::new(MAP_WIDTH, MAP_HEIGHT)),
+            )
+            .with_drag(),
+            gesture_started: false,
+        }
+    }
+}
+
+fn map_point(bounds: Rect, point: radiant::gui::types::Point) -> radiant::gui::types::Point {
+    radiant::gui::types::Point::new(
+        ((point.x - bounds.min.x) / bounds.width().max(1.0)).clamp(0.0, 1.0),
+        ((point.y - bounds.min.y) / bounds.height().max(1.0)).clamp(0.0, 1.0),
+    )
+}
+
+fn localize_map_drag(bounds: Rect, drag: DragHandleMessage) -> DragHandleMessage {
+    match drag {
+        DragHandleMessage::Started { origin, position } => DragHandleMessage::Started {
+            origin: map_point(bounds, origin),
+            position: map_point(bounds, position),
+        },
+        DragHandleMessage::Moved { position } => DragHandleMessage::Moved {
+            position: map_point(bounds, position),
+        },
+        DragHandleMessage::Ended { position } => DragHandleMessage::Ended {
+            position: map_point(bounds, position),
+        },
+        DragHandleMessage::DoubleActivate { position } => DragHandleMessage::DoubleActivate {
+            position: map_point(bounds, position),
+        },
+        DragHandleMessage::Cancelled { position } => DragHandleMessage::Cancelled {
+            position: map_point(bounds, position),
+        },
+    }
+}
+
+impl Widget for TensionMapWidget {
+    fn common(&self) -> &WidgetCommon {
+        self.button.common()
     }
 
-    /// Return the last known logical window size.
-    pub fn last_size(&self) -> Option<(u32, u32)> {
-        self.window.last_size()
+    fn common_mut(&mut self) -> &mut WidgetCommon {
+        self.button.common_mut()
     }
 
-    /// Open the plugin editor with shared parameter and metering state.
-    pub fn open(
-        &mut self,
-        params: &Arc<crate::params::TensionFieldParams>,
-        automation_queue: Arc<AutomationQueue>,
-        status: Arc<GuiStatus>,
-        param_requester: Option<HostParamRequester>,
-    ) -> Result<(), PluginError> {
-        if self.is_open {
-            return Ok(());
+    fn handle_input(&mut self, bounds: Rect, input: WidgetInput) -> Option<WidgetOutput> {
+        let pointer_press = match &input {
+            WidgetInput::PointerPress {
+                position,
+                button: PointerButton::Primary,
+                ..
+            } if bounds.contains(*position) => Some(*position),
+            _ => None,
+        };
+        let pointer_release = match &input {
+            WidgetInput::PointerRelease {
+                position,
+                button: PointerButton::Primary,
+                ..
+            } => Some(*position),
+            _ => None,
+        };
+
+        if let WidgetInput::PointerDoubleClick {
+            position,
+            button: PointerButton::Primary,
+            ..
+        } = &input
+            && bounds.contains(*position)
+        {
+            self.gesture_started = false;
+            return Some(WidgetOutput::typed(TensionMapOutput::Drag(
+                localize_map_drag(
+                    bounds,
+                    DragHandleMessage::DoubleActivate {
+                        position: *position,
+                    },
+                ),
+            )));
         }
 
-        let mut state = GuiState::new(
-            Arc::clone(params),
-            automation_queue,
-            status,
-            param_requester,
-        );
-        let (width, height) = state.measure_window_size();
+        let message = self.button.handle_input(bounds, input);
 
-        self.window.open_parented(
-            "Tension Field".to_string(),
-            (width, height),
-            state,
-            |_state| {},
-            |_input, state: &mut GuiState| state.build_spec(),
-        )?;
-        self.is_open = true;
-        Ok(())
+        if let Some(position) = pointer_press
+            && self.button.common.state.pressed
+        {
+            self.gesture_started = true;
+            return Some(WidgetOutput::typed(TensionMapOutput::Drag(
+                localize_map_drag(bounds, DragHandleMessage::started(position)),
+            )));
+        }
+
+        let message = message?;
+        match message {
+            ButtonMessage::Activate | ButtonMessage::ActivateWithModifiers { .. } => {
+                pointer_release
+                    .filter(|_| self.gesture_started)
+                    .map(|position| {
+                        self.gesture_started = false;
+                        WidgetOutput::typed(TensionMapOutput::Drag(localize_map_drag(
+                            bounds,
+                            DragHandleMessage::Ended { position },
+                        )))
+                    })
+            }
+            ButtonMessage::Drag(drag) => {
+                let drag = match drag {
+                    DragHandleMessage::Started { position, .. } if self.gesture_started => {
+                        DragHandleMessage::Moved { position }
+                    }
+                    DragHandleMessage::Started { origin, position } => {
+                        self.gesture_started = true;
+                        DragHandleMessage::Started { origin, position }
+                    }
+                    DragHandleMessage::Moved { position } => DragHandleMessage::Moved { position },
+                    DragHandleMessage::Ended { position } => {
+                        self.gesture_started = false;
+                        DragHandleMessage::Ended { position }
+                    }
+                    DragHandleMessage::DoubleActivate { position } => {
+                        self.gesture_started = false;
+                        DragHandleMessage::DoubleActivate { position }
+                    }
+                    DragHandleMessage::Cancelled { position } => {
+                        self.gesture_started = false;
+                        DragHandleMessage::Cancelled { position }
+                    }
+                };
+                Some(WidgetOutput::typed(TensionMapOutput::Drag(
+                    localize_map_drag(bounds, drag),
+                )))
+            }
+            ButtonMessage::SecondaryActivate { .. } => None,
+        }
     }
 
-    /// Request a resize on the GUI thread.
-    pub fn request_resize(&self, width: u32, height: u32) {
-        self.window.request_resize(width, height);
-    }
-
-    /// Close the editor if it is currently open.
-    pub fn close(&mut self) {
-        self.window.hide();
-        self.is_open = false;
-    }
-}
-
-/// Measure the preferred editor size from the declarative layout.
-pub fn preferred_window_size(
-    params: &Arc<crate::params::TensionFieldParams>,
-    status: &Arc<GuiStatus>,
-) -> (u32, u32) {
-    let mut state = GuiState::new(
-        Arc::clone(params),
-        Arc::new(AutomationQueue::default()),
-        Arc::clone(status),
-        None,
-    );
-    state.measure_window_size()
-}
-
-#[cfg(all(test, feature = "screenshot-test"))]
-mod screenshot_tests {
-    use std::sync::Arc;
-
-    use toybox::clap::automation::AutomationQueue;
-    use toybox::gui::{Size, screenshot_harness};
-
-    use super::{GuiState, GuiStatus, HostParamRequester, preferred_window_size};
-
-    #[test]
-    fn screenshot_renders_initial_ui() {
-        if !screenshot_harness::screenshots_enabled() {
+    fn synchronize_from_previous(&mut self, previous: &dyn Widget) {
+        let Some(previous) = previous.as_any().downcast_ref::<Self>() else {
             return;
-        }
+        };
+        self.button.synchronize_from_previous(&previous.button);
+        self.gesture_started = previous.gesture_started;
+    }
 
-        let params = Arc::new(crate::params::TensionFieldParams::new());
-        let status = Arc::new(GuiStatus::default());
-        let (base_w, base_h) = preferred_window_size(&params, &status);
+    fn capabilities(&self) -> WidgetCapabilities<'_> {
+        self.button.capabilities()
+    }
 
-        let queue = Arc::new(AutomationQueue::default());
-        let param_requester: Option<HostParamRequester> = None;
-        let mut state = GuiState::new(params, queue, status, param_requester);
-
-        screenshot_harness::capture_initial_ui_screenshots_if_enabled(
-            env!("CARGO_PKG_NAME"),
-            Size {
-                width: base_w,
-                height: base_h,
-            },
-            |_input| state.build_spec(),
-        )
-        .expect("failed to capture tension_field headless screenshots");
+    fn append_paint(
+        &self,
+        primitives: &mut Vec<PaintPrimitive>,
+        bounds: Rect,
+        layout: &LayoutOutput,
+        theme: &ThemeTokens,
+    ) {
+        self.button.append_paint(primitives, bounds, layout, theme);
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+/// Return the stable preferred size used before a host negotiates its child
+/// view size.
+pub(crate) fn preferred_window_size() -> (u32, u32) {
+    (WINDOW_WIDTH, WINDOW_HEIGHT)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ActiveTab {
     Perform,
     Rhythm,
@@ -189,16 +257,9 @@ enum ActiveTab {
 }
 
 impl ActiveTab {
-    fn key(self) -> &'static str {
-        match self {
-            Self::Perform => "perform",
-            Self::Rhythm => "rhythm",
-            Self::Tone => "tone",
-            Self::Safety => "safety",
-        }
-    }
+    const ALL: [Self; 4] = [Self::Perform, Self::Rhythm, Self::Tone, Self::Safety];
 
-    fn title(self) -> &'static str {
+    const fn title(self) -> &'static str {
         match self {
             Self::Perform => "Perform",
             Self::Rhythm => "Rhythm",
@@ -206,168 +267,106 @@ impl ActiveTab {
             Self::Safety => "Safety + Out",
         }
     }
-
-    fn all() -> [Self; 4] {
-        [Self::Perform, Self::Rhythm, Self::Tone, Self::Safety]
-    }
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-enum TensionPreset {
-    PulseDrive,
-    RatchetPressure,
-    PreDropCoil,
-    ElasticSurge,
-    ForwardStrain,
-    TripletAnxiety,
-    GhostLift,
-    CrushSqueeze,
-    WidePanic,
-    AftershockTail,
+#[derive(Clone, Copy, Debug)]
+struct ParamRange {
+    min: f32,
+    max: f32,
+    default: f32,
+    step: Option<f32>,
 }
 
-impl TensionPreset {
-    fn all() -> [Self; 10] {
-        [
-            Self::PulseDrive,
-            Self::RatchetPressure,
-            Self::PreDropCoil,
-            Self::ElasticSurge,
-            Self::ForwardStrain,
-            Self::TripletAnxiety,
-            Self::GhostLift,
-            Self::CrushSqueeze,
-            Self::WidePanic,
-            Self::AftershockTail,
-        ]
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::PulseDrive => "Pulse Drive",
-            Self::RatchetPressure => "Ratchet Pressure",
-            Self::PreDropCoil => "Pre-Drop Coil",
-            Self::ElasticSurge => "Elastic Surge",
-            Self::ForwardStrain => "Forward Strain",
-            Self::TripletAnxiety => "Triplet Anxiety",
-            Self::GhostLift => "Ghost Lift",
-            Self::CrushSqueeze => "Crush Squeeze",
-            Self::WidePanic => "Wide Panic",
-            Self::AftershockTail => "Aftershock Tail",
+impl ParamRange {
+    const fn new(min: f32, max: f32, default: f32) -> Self {
+        Self {
+            min,
+            max,
+            default,
+            step: None,
         }
     }
 
-    fn updates(self) -> &'static [(ClapId, f32)] {
-        match self {
-            Self::PulseDrive => &[
-                (PARAM_TENSION_ID, 0.74),
-                (PARAM_PULL_SHAPE_ID, 4.0),
-                (PARAM_PULL_DIVISION_ID, 4.0),
-                (PARAM_PULL_QUANTIZE_ID, 1.0),
-                (PARAM_TENSION_BIAS_ID, 0.75),
-                (PARAM_RELEASE_SNAP_ID, 0.62),
-                (PARAM_WARP_MOTION_ID, 0.56),
-                (PARAM_FEEDBACK_ID, 0.26),
-            ],
-            Self::RatchetPressure => &[
-                (PARAM_TENSION_ID, 0.67),
-                (PARAM_PULL_SHAPE_ID, 2.0),
-                (PARAM_PULL_DIVISION_ID, 2.0),
-                (PARAM_TENSION_BIAS_ID, 0.64),
-                (PARAM_GRAIN_CONTINUITY_ID, 0.54),
-                (PARAM_WARP_MOTION_ID, 0.58),
-                (PARAM_CLEAN_DIRTY_ID, 1.0),
-            ],
-            Self::PreDropCoil => &[
-                (PARAM_TENSION_ID, 0.78),
-                (PARAM_PULL_DIVISION_ID, 6.0),
-                (PARAM_PULL_LATCH_ID, 1.0),
-                (PARAM_TENSION_BIAS_ID, 0.82),
-                (PARAM_RELEASE_SNAP_ID, 0.74),
-                (PARAM_FEEDBACK_ID, 0.34),
-                (PARAM_DUCKING_ID, 0.32),
-            ],
-            Self::ElasticSurge => &[
-                (PARAM_TENSION_ID, 0.72),
-                (PARAM_PULL_DIVISION_ID, 5.0),
-                (PARAM_SWING_ID, 0.18),
-                (PARAM_ELASTICITY_ID, 0.82),
-                (PARAM_WARP_MOTION_ID, 0.51),
-                (PARAM_DIFFUSION_ID, 0.64),
-            ],
-            Self::ForwardStrain => &[
-                (PARAM_TENSION_ID, 0.7),
-                (PARAM_PULL_DIRECTION_ID, 0.84),
-                (PARAM_TENSION_BIAS_ID, 0.69),
-                (PARAM_PULL_QUANTIZE_ID, 2.0),
-                (PARAM_RELEASE_SNAP_ID, 0.58),
-                (PARAM_WARP_COLOR_ID, 1.0),
-            ],
-            Self::TripletAnxiety => &[
-                (PARAM_TENSION_ID, 0.65),
-                (PARAM_PULL_DIVISION_ID, 3.0),
-                (PARAM_PULL_QUANTIZE_ID, 1.0),
-                (PARAM_SWING_ID, 0.22),
-                (PARAM_TENSION_BIAS_ID, 0.6),
-                (PARAM_WARP_MOTION_ID, 0.61),
-            ],
-            Self::GhostLift => &[
-                (PARAM_TENSION_ID, 0.52),
-                (PARAM_PULL_SHAPE_ID, 0.0),
-                (PARAM_PULL_DIVISION_ID, 4.0),
-                (PARAM_RELEASE_SNAP_ID, 0.44),
-                (PARAM_DIFFUSION_ID, 0.66),
-                (PARAM_WIDTH_ID, 0.75),
-            ],
-            Self::CrushSqueeze => &[
-                (PARAM_TENSION_ID, 0.73),
-                (PARAM_CLEAN_DIRTY_ID, 2.0),
-                (PARAM_GRAIN_CONTINUITY_ID, 0.57),
-                (PARAM_WARP_MOTION_ID, 0.67),
-                (PARAM_FEEDBACK_ID, 0.22),
-                (PARAM_ENERGY_CEILING_ID, 0.52),
-            ],
-            Self::WidePanic => &[
-                (PARAM_TENSION_ID, 0.64),
-                (PARAM_WIDTH_ID, 0.9),
-                (PARAM_DIFFUSION_ID, 0.74),
-                (PARAM_PULL_DIVISION_ID, 2.0),
-                (PARAM_TENSION_BIAS_ID, 0.58),
-                (PARAM_FEEDBACK_ID, 0.18),
-            ],
-            Self::AftershockTail => &[
-                (PARAM_TENSION_ID, 0.68),
-                (PARAM_PULL_LATCH_ID, 1.0),
-                (PARAM_PULL_DIVISION_ID, 5.0),
-                (PARAM_FEEDBACK_ID, 0.41),
-                (PARAM_DUCKING_ID, 0.38),
-                (PARAM_ENERGY_CEILING_ID, 0.66),
-            ],
+    const fn stepped(min: f32, max: f32, default: f32, step: f32) -> Self {
+        Self {
+            min,
+            max,
+            default,
+            step: Some(step),
+        }
+    }
+
+    fn normalize(self, value: f32) -> f32 {
+        ((value - self.min) / (self.max - self.min).max(f32::EPSILON)).clamp(0.0, 1.0)
+    }
+
+    fn denormalize(self, value: f32) -> f32 {
+        let value = self.min + value.clamp(0.0, 1.0) * (self.max - self.min);
+        match self.step {
+            Some(step) if step > 0.0 => {
+                (self.min + ((value - self.min) / step).round() * step).clamp(self.min, self.max)
+            }
+            _ => value,
         }
     }
 }
 
-struct GuiState {
+const UNIT: ParamRange = ParamRange::new(0.0, 1.0, 0.5);
+const BIPOLAR: ParamRange = ParamRange::new(-1.0, 1.0, 0.0);
+const PULL_RATE: ParamRange = ParamRange::new(0.02, 4.0, 0.25);
+const MOD_RATE: ParamRange = ParamRange::new(0.01, 4.0, 0.25);
+const FEEDBACK: ParamRange = ParamRange::new(0.0, 0.7, 0.12);
+const OUTPUT_TRIM: ParamRange = ParamRange::new(-12.0, 6.0, 0.0);
+
+#[derive(Clone, Copy, Debug)]
+enum EditorMessage {
+    SelectTab(ActiveTab),
+    Parameter {
+        id: ClapId,
+        range: ParamRange,
+        event: KnobMessage,
+    },
+    Toggle {
+        id: ClapId,
+        checked: bool,
+    },
+    Pull,
+    TensionMapReset,
+    TensionMapDrag(DragHandleMessage),
+    Preset(usize),
+}
+
+#[derive(Clone)]
+struct EditorState {
     params: Arc<crate::params::TensionFieldParams>,
     automation_queue: Arc<AutomationQueue>,
     automation_config: AutomationConfig,
     status: Arc<GuiStatus>,
     param_requester: Option<HostParamRequester>,
+    edit_sink: Option<Arc<dyn HostParamEditSink>>,
     active_tab: ActiveTab,
-    map_dragging: bool,
-    map_trace: Vec<Point>,
     meter_smooth: [f32; 9],
     meter_peak_hold: [f32; 9],
-    last_frame: Instant,
-    frame_dt: f32,
+    last_meter_update: Instant,
 }
 
-impl GuiState {
+impl EditorState {
+    #[cfg(test)]
     fn new(
         params: Arc<crate::params::TensionFieldParams>,
         automation_queue: Arc<AutomationQueue>,
         status: Arc<GuiStatus>,
         param_requester: Option<HostParamRequester>,
+    ) -> Self {
+        Self::new_with_edit_sink(params, automation_queue, status, param_requester, None)
+    }
+
+    fn new_with_edit_sink(
+        params: Arc<crate::params::TensionFieldParams>,
+        automation_queue: Arc<AutomationQueue>,
+        status: Arc<GuiStatus>,
+        param_requester: Option<HostParamRequester>,
+        edit_sink: Option<Arc<dyn HostParamEditSink>>,
     ) -> Self {
         Self {
             params,
@@ -375,1226 +374,53 @@ impl GuiState {
             automation_config: AutomationConfig::default(),
             status,
             param_requester,
+            edit_sink,
             active_tab: ActiveTab::Perform,
-            map_dragging: false,
-            map_trace: Vec::with_capacity(48),
             meter_smooth: [0.0; 9],
             meter_peak_hold: [0.0; 9],
-            last_frame: Instant::now(),
-            frame_dt: 1.0 / 60.0,
+            last_meter_update: Instant::now(),
         }
     }
 
-    fn measure_window_size(&mut self) -> (u32, u32) {
-        let spec = self.build_spec();
-        let measured = measure(&spec, &Theme::default());
-        (measured.width.max(1), measured.height.max(1))
-    }
-
-    fn build_spec(&mut self) -> UiSpec<'static, GuiState> {
+    fn update_meters(&mut self) {
         let now = Instant::now();
-        self.frame_dt = (now - self.last_frame).as_secs_f32().clamp(0.0, 0.1);
-        self.last_frame = now;
-
-        let header = Node::Widget(WidgetSpec {
-            key: "tension-field-header".to_string(),
-            size: SizeSpec::Fixed(Size {
-                width: 460,
-                height: 24,
-            }),
-            render: Box::new(|ui, rect, state: &mut GuiState| {
-                ui.canvas().fill_rect(rect, BG);
-                ui.text_with_color(rect.origin, "TENSION FIELD", TITLE);
-                ui.text_with_color(
-                    Point {
-                        x: rect.origin.x + 190,
-                        y: rect.origin.y,
-                    },
-                    "rhythmic strain engine",
-                    SUBTITLE,
-                );
-                ui.text_with_color(
-                    Point {
-                        x: rect.origin.x + 370,
-                        y: rect.origin.y,
-                    },
-                    state.active_tab.title(),
-                    ACCENT,
-                );
-            }),
-        });
-
-        let tabs = self.build_tab_row();
-        let main_content = match self.active_tab {
-            ActiveTab::Perform => self.build_perform_tab(),
-            ActiveTab::Rhythm => self.build_rhythm_tab(),
-            ActiveTab::Tone => self.build_tone_tab(),
-            ActiveTab::Safety => self.build_safety_tab(),
-        };
-
-        let meter_panel = self.build_meter_panel();
-
-        UiSpec {
-            root: RootFrameSpec {
-                key: "tension-field-root".to_string(),
-                title: None,
-                padding: 0,
-                content: Box::new(Node::Panel(PanelSpec {
-                    key: "tension-field-main".to_string(),
-                    title: None,
-                    padding: 0,
-                    background: Some(BG),
-                    outline: Some(BG),
-                    header_height: Some(0),
-                    size: SizeSpec::Auto,
-                    content: Box::new(Node::Column(FlexSpec {
-                        size: SizeSpec::Auto,
-                        gap: PANEL_GAP,
-                        padding: Padding::symmetric(ROOT_PADDING_X, ROOT_PADDING_Y),
-                        align: Align::Start,
-                        children: vec![header, tabs, main_content, meter_panel],
-                    })),
-                })),
-            },
-        }
-    }
-
-    fn build_tab_row(&self) -> Node<'static, GuiState> {
-        let mut children = Vec::with_capacity(ActiveTab::all().len());
-        for tab in ActiveTab::all() {
-            children.push(self.tab_button(tab));
-        }
-        Node::Row(FlexSpec {
-            size: SizeSpec::Auto,
-            gap: CONTROL_GAP,
-            padding: Padding::default(),
-            align: Align::Start,
-            children,
-        })
-    }
-
-    fn tab_button(&self, tab: ActiveTab) -> Node<'static, GuiState> {
-        Node::Region(RegionSpec {
-            key: format!("tab-{}", tab.key()),
-            size: Size {
-                width: 120,
-                height: 24,
-            },
-            on_interaction: Some(Box::new(move |state: &mut GuiState, event| {
-                // Treat release-inside as a click for compatibility across toybox UI versions.
-                if event.response.released && event.response.hovered {
-                    state.active_tab = tab;
-                }
-            })),
-            draw: Some(Box::new(
-                move |canvas, rect, state: &mut GuiState, response| {
-                    let active = state.active_tab == tab;
-                    let fill = if active {
-                        TAB_ACTIVE
-                    } else if response.hovered {
-                        Color::rgb(60, 72, 90)
-                    } else {
-                        TAB_INACTIVE
-                    };
-                    canvas.fill_rect(rect, fill);
-                    canvas.stroke_rect(rect, 1, PANEL_BORDER);
-                    canvas.draw_text(
-                        Point {
-                            x: rect.origin.x + 14,
-                            y: rect.origin.y + 8,
-                        },
-                        tab.title(),
-                        if active { BG } else { TITLE },
-                        1,
-                    );
-                },
-            )),
-        })
-    }
-
-    fn build_perform_tab(&self) -> Node<'static, GuiState> {
-        Node::Panel(PanelSpec {
-            key: "perform-tab".to_string(),
-            title: Some("Perform".to_string()),
-            padding: 10,
-            background: Some(PANEL_BG),
-            outline: Some(PANEL_BORDER),
-            header_height: None,
-            size: SizeSpec::Auto,
-            content: Box::new(Node::Column(FlexSpec {
-                size: SizeSpec::Auto,
-                gap: CONTROL_GAP,
-                padding: Padding::default(),
-                align: Align::Start,
-                children: vec![
-                    Node::Row(FlexSpec {
-                        size: SizeSpec::Auto,
-                        gap: CONTROL_GAP,
-                        padding: Padding::default(),
-                        align: Align::Start,
-                        children: vec![
-                            self.param_knob(
-                                "tension",
-                                "Tension",
-                                PARAM_TENSION_ID,
-                                self.param_value(PARAM_TENSION_ID, 0.5),
-                                (0.0, 1.0),
-                                "%",
-                            ),
-                            self.param_knob(
-                                "tension-bias",
-                                "Tension Bias",
-                                PARAM_TENSION_BIAS_ID,
-                                self.param_value(PARAM_TENSION_BIAS_ID, 0.5),
-                                (0.0, 1.0),
-                                "%",
-                            ),
-                            self.pull_button(),
-                            self.param_toggle(
-                                "pull-latch",
-                                "Latch",
-                                PARAM_PULL_LATCH_ID,
-                                self.param_bool(PARAM_PULL_LATCH_ID, false),
-                            ),
-                            self.param_dropdown(
-                                "pull-quant",
-                                "Quant",
-                                PARAM_PULL_QUANTIZE_ID,
-                                PULL_QUANTIZE_LABELS
-                                    .iter()
-                                    .map(|v| (*v).to_string())
-                                    .collect(),
-                                self.param_value(PARAM_PULL_QUANTIZE_ID, 1.0).round() as usize,
-                                pull_quantize_value_from_index,
-                            ),
-                        ],
-                    }),
-                    self.quantize_indicator(),
-                    Node::Widget(WidgetSpec {
-                        key: "tension-map-widget".to_string(),
-                        size: SizeSpec::Fixed(Size {
-                            width: MAP_WIDTH,
-                            height: MAP_HEIGHT,
-                        }),
-                        render: Box::new(|ui, rect, state: &mut GuiState| {
-                            state.draw_tension_map(ui, rect);
-                        }),
-                    }),
-                    Node::Row(FlexSpec {
-                        size: SizeSpec::Auto,
-                        gap: CONTROL_GAP,
-                        padding: Padding::default(),
-                        align: Align::Start,
-                        children: vec![
-                            self.param_knob(
-                                "direction",
-                                "Direction",
-                                PARAM_PULL_DIRECTION_ID,
-                                self.param_value(PARAM_PULL_DIRECTION_ID, 0.5),
-                                (0.0, 1.0),
-                                "%",
-                            ),
-                            self.param_knob(
-                                "elasticity",
-                                "Elasticity",
-                                PARAM_ELASTICITY_ID,
-                                self.param_value(PARAM_ELASTICITY_ID, 0.65),
-                                (0.0, 1.0),
-                                "%",
-                            ),
-                            self.param_dropdown(
-                                "pull-shape",
-                                "Pull Shape",
-                                PARAM_PULL_SHAPE_ID,
-                                PULL_SHAPE_LABELS.iter().map(|v| (*v).to_string()).collect(),
-                                self.param_value(PARAM_PULL_SHAPE_ID, 1.0).round() as usize,
-                                pull_shape_value_from_index,
-                            ),
-                        ],
-                    }),
-                    self.build_preset_bank(),
-                ],
-            })),
-        })
-    }
-
-    fn build_rhythm_tab(&self) -> Node<'static, GuiState> {
-        Node::Panel(PanelSpec {
-            key: "rhythm-tab".to_string(),
-            title: Some("Rhythm".to_string()),
-            padding: 10,
-            background: Some(PANEL_BG),
-            outline: Some(PANEL_BORDER),
-            header_height: None,
-            size: SizeSpec::Auto,
-            content: Box::new(Node::Column(FlexSpec {
-                size: SizeSpec::Auto,
-                gap: CONTROL_GAP,
-                padding: Padding::default(),
-                align: Align::Start,
-                children: vec![
-                    Node::Row(FlexSpec {
-                        size: SizeSpec::Auto,
-                        gap: CONTROL_GAP,
-                        padding: Padding::default(),
-                        align: Align::Start,
-                        children: vec![
-                            self.param_dropdown(
-                                "time-mode",
-                                "Time Mode",
-                                PARAM_TIME_MODE_ID,
-                                TIME_MODE_LABELS.iter().map(|v| (*v).to_string()).collect(),
-                                self.param_value(PARAM_TIME_MODE_ID, 1.0).round() as usize,
-                                |index| index.min(1) as f32,
-                            ),
-                            self.param_dropdown(
-                                "pull-division",
-                                "Pull Division",
-                                PARAM_PULL_DIVISION_ID,
-                                PULL_DIVISION_LABELS
-                                    .iter()
-                                    .map(|v| (*v).to_string())
-                                    .collect(),
-                                self.param_value(PARAM_PULL_DIVISION_ID, 4.0).round() as usize,
-                                pull_division_value_from_index,
-                            ),
-                            self.param_knob(
-                                "pull-rate",
-                                "Pull Rate",
-                                PARAM_PULL_RATE_ID,
-                                self.param_value(PARAM_PULL_RATE_ID, 0.35),
-                                (0.02, 4.0),
-                                "Hz",
-                            ),
-                        ],
-                    }),
-                    Node::Row(FlexSpec {
-                        size: SizeSpec::Auto,
-                        gap: CONTROL_GAP,
-                        padding: Padding::default(),
-                        align: Align::Start,
-                        children: vec![
-                            self.param_knob(
-                                "swing",
-                                "Swing",
-                                PARAM_SWING_ID,
-                                self.param_value(PARAM_SWING_ID, 0.0),
-                                (0.0, 1.0),
-                                "%",
-                            ),
-                            self.param_knob(
-                                "rebound",
-                                "Rebound",
-                                PARAM_REBOUND_ID,
-                                self.param_value(PARAM_REBOUND_ID, 0.55),
-                                (0.0, 1.0),
-                                "%",
-                            ),
-                            self.param_knob(
-                                "release-snap",
-                                "Release Snap",
-                                PARAM_RELEASE_SNAP_ID,
-                                self.param_value(PARAM_RELEASE_SNAP_ID, 0.35),
-                                (0.0, 1.0),
-                                "%",
-                            ),
-                        ],
-                    }),
-                    Node::Row(FlexSpec {
-                        size: SizeSpec::Auto,
-                        gap: CONTROL_GAP,
-                        padding: Padding::default(),
-                        align: Align::Start,
-                        children: vec![
-                            self.param_toggle(
-                                "hold",
-                                "Hold",
-                                PARAM_HOLD_ID,
-                                self.param_bool(PARAM_HOLD_ID, false),
-                            ),
-                            self.param_toggle(
-                                "pull-latch-r",
-                                "Pull Latch",
-                                PARAM_PULL_LATCH_ID,
-                                self.param_bool(PARAM_PULL_LATCH_ID, false),
-                            ),
-                            self.param_dropdown(
-                                "pull-quant-r",
-                                "Pull Quant",
-                                PARAM_PULL_QUANTIZE_ID,
-                                PULL_QUANTIZE_LABELS
-                                    .iter()
-                                    .map(|v| (*v).to_string())
-                                    .collect(),
-                                self.param_value(PARAM_PULL_QUANTIZE_ID, 1.0).round() as usize,
-                                pull_quantize_value_from_index,
-                            ),
-                        ],
-                    }),
-                ],
-            })),
-        })
-    }
-
-    fn build_tone_tab(&self) -> Node<'static, GuiState> {
-        Node::Panel(PanelSpec {
-            key: "tone-tab".to_string(),
-            title: Some("Tone + Mod".to_string()),
-            padding: 10,
-            background: Some(PANEL_BG),
-            outline: Some(PANEL_BORDER),
-            header_height: None,
-            size: SizeSpec::Auto,
-            content: Box::new(Node::Column(FlexSpec {
-                size: SizeSpec::Auto,
-                gap: CONTROL_GAP,
-                padding: Padding::default(),
-                align: Align::Start,
-                children: vec![
-                    Node::Row(FlexSpec {
-                        size: SizeSpec::Auto,
-                        gap: CONTROL_GAP,
-                        padding: Padding::default(),
-                        align: Align::Start,
-                        children: vec![
-                            self.param_knob(
-                                "grain",
-                                "Grain",
-                                PARAM_GRAIN_CONTINUITY_ID,
-                                self.param_value(PARAM_GRAIN_CONTINUITY_ID, 0.28),
-                                (0.0, 1.0),
-                                "%",
-                            ),
-                            self.param_knob(
-                                "pitch-coupling",
-                                "Pitch Coupling",
-                                PARAM_PITCH_COUPLING_ID,
-                                self.param_value(PARAM_PITCH_COUPLING_ID, 0.2),
-                                (0.0, 1.0),
-                                "%",
-                            ),
-                            self.param_knob(
-                                "warp-motion",
-                                "Warp Motion",
-                                PARAM_WARP_MOTION_ID,
-                                self.param_value(PARAM_WARP_MOTION_ID, 0.35),
-                                (0.0, 1.0),
-                                "%",
-                            ),
-                            self.param_dropdown(
-                                "warp-color",
-                                "Warp Color",
-                                PARAM_WARP_COLOR_ID,
-                                WARP_COLOR_LABELS.iter().map(|v| (*v).to_string()).collect(),
-                                self.param_value(PARAM_WARP_COLOR_ID, 0.0).round() as usize,
-                                warp_color_value_from_index,
-                            ),
-                            self.param_dropdown(
-                                "character",
-                                "Character",
-                                PARAM_CLEAN_DIRTY_ID,
-                                CHARACTER_LABELS.iter().map(|v| (*v).to_string()).collect(),
-                                self.param_value(PARAM_CLEAN_DIRTY_ID, 0.0).round() as usize,
-                                character_mode_value_from_index,
-                            ),
-                        ],
-                    }),
-                    Node::Row(FlexSpec {
-                        size: SizeSpec::Auto,
-                        gap: CONTROL_GAP,
-                        padding: Padding::default(),
-                        align: Align::Start,
-                        children: vec![
-                            self.param_knob(
-                                "width",
-                                "Width",
-                                PARAM_WIDTH_ID,
-                                self.param_value(PARAM_WIDTH_ID, 0.6),
-                                (0.0, 1.0),
-                                "%",
-                            ),
-                            self.param_knob(
-                                "diffusion",
-                                "Diffusion",
-                                PARAM_DIFFUSION_ID,
-                                self.param_value(PARAM_DIFFUSION_ID, 0.55),
-                                (0.0, 1.0),
-                                "%",
-                            ),
-                            self.param_knob(
-                                "air-damping",
-                                "Air Damping",
-                                PARAM_AIR_DAMPING_ID,
-                                self.param_value(PARAM_AIR_DAMPING_ID, 0.35),
-                                (0.0, 1.0),
-                                "%",
-                            ),
-                            self.param_toggle(
-                                "air-comp",
-                                "Air Comp",
-                                PARAM_AIR_COMP_ID,
-                                self.param_bool(PARAM_AIR_COMP_ID, true),
-                            ),
-                        ],
-                    }),
-                    self.build_mod_matrix_panel(),
-                ],
-            })),
-        })
-    }
-
-    fn build_safety_tab(&self) -> Node<'static, GuiState> {
-        Node::Panel(PanelSpec {
-            key: "safety-tab".to_string(),
-            title: Some("Safety + Output".to_string()),
-            padding: 10,
-            background: Some(PANEL_BG),
-            outline: Some(PANEL_BORDER),
-            header_height: None,
-            size: SizeSpec::Auto,
-            content: Box::new(Node::Column(FlexSpec {
-                size: SizeSpec::Auto,
-                gap: CONTROL_GAP,
-                padding: Padding::default(),
-                align: Align::Start,
-                children: vec![
-                    Node::Row(FlexSpec {
-                        size: SizeSpec::Auto,
-                        gap: CONTROL_GAP,
-                        padding: Padding::default(),
-                        align: Align::Start,
-                        children: vec![
-                            self.param_knob(
-                                "feedback",
-                                "Feedback",
-                                PARAM_FEEDBACK_ID,
-                                self.param_value(PARAM_FEEDBACK_ID, 0.12),
-                                (0.0, 0.7),
-                                "%",
-                            ),
-                            self.param_knob(
-                                "ducking",
-                                "Ducking",
-                                PARAM_DUCKING_ID,
-                                self.param_value(PARAM_DUCKING_ID, 0.0),
-                                (0.0, 1.0),
-                                "%",
-                            ),
-                            self.param_knob(
-                                "energy-ceiling",
-                                "Energy Ceiling",
-                                PARAM_ENERGY_CEILING_ID,
-                                self.param_value(PARAM_ENERGY_CEILING_ID, 0.7),
-                                (0.0, 1.0),
-                                "%",
-                            ),
-                            self.param_knob(
-                                "output-trim",
-                                "Output Trim",
-                                PARAM_OUTPUT_TRIM_DB_ID,
-                                self.param_value(PARAM_OUTPUT_TRIM_DB_ID, 0.0),
-                                (-12.0, 6.0),
-                                "dB",
-                            ),
-                        ],
-                    }),
-                    Node::Label(LabelSpec {
-                        text: "Safety ceilings are always active; lower Energy Ceiling for stricter containment."
-                            .to_string(),
-                        size: SizeSpec::Auto,
-                        color: Some(SUBTITLE),
-                    }),
-                ],
-            })),
-        })
-    }
-
-    fn build_mod_matrix_panel(&self) -> Node<'static, GuiState> {
-        Node::Panel(PanelSpec {
-            key: "mod-matrix-panel".to_string(),
-            title: Some("DSP Mod Matrix".to_string()),
-            padding: 8,
-            background: Some(Color::rgb(21, 26, 34)),
-            outline: Some(PANEL_BORDER),
-            header_height: None,
-            size: SizeSpec::Auto,
-            content: Box::new(Node::Column(FlexSpec {
-                size: SizeSpec::Auto,
-                gap: CONTROL_GAP,
-                padding: Padding::default(),
-                align: Align::Start,
-                children: vec![
-                    self.param_toggle(
-                        "mod-run",
-                        "Run",
-                        PARAM_MOD_RUN_ID,
-                        self.param_bool(PARAM_MOD_RUN_ID, true),
-                    ),
-                    self.mod_source_row(
-                        "A",
-                        PARAM_MOD_A_SHAPE_ID,
-                        PARAM_MOD_A_RATE_MODE_ID,
-                        PARAM_MOD_A_RATE_HZ_ID,
-                        PARAM_MOD_A_DIVISION_ID,
-                        PARAM_MOD_A_DEPTH_ID,
-                    ),
-                    self.mod_source_row(
-                        "B",
-                        PARAM_MOD_B_SHAPE_ID,
-                        PARAM_MOD_B_RATE_MODE_ID,
-                        PARAM_MOD_B_RATE_HZ_ID,
-                        PARAM_MOD_B_DIVISION_ID,
-                        PARAM_MOD_B_DEPTH_ID,
-                    ),
-                    Node::Label(LabelSpec {
-                        text: "Routes (A/B): Tension Direction Grain Width Warp Feedback"
-                            .to_string(),
-                        size: SizeSpec::Auto,
-                        color: Some(SUBTITLE),
-                    }),
-                    self.mod_routes_row(
-                        "A",
-                        [
-                            PARAM_MOD_A_TO_TENSION_ID,
-                            PARAM_MOD_A_TO_DIRECTION_ID,
-                            PARAM_MOD_A_TO_GRAIN_ID,
-                            PARAM_MOD_A_TO_WIDTH_ID,
-                            PARAM_MOD_A_TO_WARP_MOTION_ID,
-                            PARAM_MOD_A_TO_FEEDBACK_ID,
-                        ],
-                    ),
-                    self.mod_routes_row(
-                        "B",
-                        [
-                            PARAM_MOD_B_TO_TENSION_ID,
-                            PARAM_MOD_B_TO_DIRECTION_ID,
-                            PARAM_MOD_B_TO_GRAIN_ID,
-                            PARAM_MOD_B_TO_WIDTH_ID,
-                            PARAM_MOD_B_TO_WARP_MOTION_ID,
-                            PARAM_MOD_B_TO_FEEDBACK_ID,
-                        ],
-                    ),
-                ],
-            })),
-        })
-    }
-
-    fn mod_source_row(
-        &self,
-        label: &'static str,
-        shape_id: ClapId,
-        rate_mode_id: ClapId,
-        rate_hz_id: ClapId,
-        division_id: ClapId,
-        depth_id: ClapId,
-    ) -> Node<'static, GuiState> {
-        Node::Row(FlexSpec {
-            size: SizeSpec::Auto,
-            gap: CONTROL_GAP,
-            padding: Padding::default(),
-            align: Align::Start,
-            children: vec![
-                Node::Label(LabelSpec {
-                    text: label.to_string(),
-                    size: SizeSpec::Auto,
-                    color: Some(TITLE),
-                }),
-                self.param_dropdown(
-                    format!("mod-{label}-shape"),
-                    "Shape",
-                    shape_id,
-                    MOD_SOURCE_SHAPE_LABELS
-                        .iter()
-                        .map(|v| (*v).to_string())
-                        .collect(),
-                    self.param_value(shape_id, 0.0).round() as usize,
-                    mod_source_shape_value_from_index,
-                ),
-                self.param_dropdown(
-                    format!("mod-{label}-rate-mode"),
-                    "Rate Mode",
-                    rate_mode_id,
-                    MOD_RATE_MODE_LABELS
-                        .iter()
-                        .map(|v| (*v).to_string())
-                        .collect(),
-                    self.param_value(rate_mode_id, 1.0).round() as usize,
-                    mod_rate_mode_value_from_index,
-                ),
-                self.param_knob(
-                    format!("mod-{label}-rate-hz"),
-                    "Rate Hz",
-                    rate_hz_id,
-                    self.param_value(rate_hz_id, 0.1),
-                    (0.01, 4.0),
-                    "Hz",
-                ),
-                self.param_dropdown(
-                    format!("mod-{label}-division"),
-                    "Division",
-                    division_id,
-                    PULL_DIVISION_LABELS
-                        .iter()
-                        .map(|v| (*v).to_string())
-                        .collect(),
-                    self.param_value(division_id, 4.0).round() as usize,
-                    pull_division_value_from_index,
-                ),
-                self.param_knob(
-                    format!("mod-{label}-depth"),
-                    "Depth",
-                    depth_id,
-                    self.param_value(depth_id, 0.2),
-                    (0.0, 1.0),
-                    "%",
-                ),
-            ],
-        })
-    }
-
-    fn mod_routes_row(&self, label: &'static str, ids: [ClapId; 6]) -> Node<'static, GuiState> {
-        Node::Row(FlexSpec {
-            size: SizeSpec::Auto,
-            gap: CONTROL_GAP,
-            padding: Padding::default(),
-            align: Align::Start,
-            children: vec![
-                Node::Label(LabelSpec {
-                    text: label.to_string(),
-                    size: SizeSpec::Auto,
-                    color: Some(TITLE),
-                }),
-                self.param_knob(
-                    format!("route-{label}-tension"),
-                    "Ten",
-                    ids[0],
-                    self.param_value(ids[0], 0.0),
-                    (-1.0, 1.0),
-                    "",
-                ),
-                self.param_knob(
-                    format!("route-{label}-direction"),
-                    "Dir",
-                    ids[1],
-                    self.param_value(ids[1], 0.0),
-                    (-1.0, 1.0),
-                    "",
-                ),
-                self.param_knob(
-                    format!("route-{label}-grain"),
-                    "Grn",
-                    ids[2],
-                    self.param_value(ids[2], 0.0),
-                    (-1.0, 1.0),
-                    "",
-                ),
-                self.param_knob(
-                    format!("route-{label}-width"),
-                    "Wid",
-                    ids[3],
-                    self.param_value(ids[3], 0.0),
-                    (-1.0, 1.0),
-                    "",
-                ),
-                self.param_knob(
-                    format!("route-{label}-warp"),
-                    "Warp",
-                    ids[4],
-                    self.param_value(ids[4], 0.0),
-                    (-1.0, 1.0),
-                    "",
-                ),
-                self.param_knob(
-                    format!("route-{label}-feedback"),
-                    "Feed",
-                    ids[5],
-                    self.param_value(ids[5], 0.0),
-                    (-1.0, 1.0),
-                    "",
-                ),
-            ],
-        })
-    }
-
-    fn build_preset_bank(&self) -> Node<'static, GuiState> {
-        let mut children = Vec::with_capacity(TensionPreset::all().len());
-        for preset in TensionPreset::all() {
-            children.push(self.preset_button(preset));
-        }
-        Node::Panel(PanelSpec {
-            key: "preset-bank".to_string(),
-            title: Some("Tension Bank".to_string()),
-            padding: 8,
-            background: Some(Color::rgb(21, 26, 34)),
-            outline: Some(PANEL_BORDER),
-            header_height: None,
-            size: SizeSpec::Auto,
-            content: Box::new(Node::Row(FlexSpec {
-                size: SizeSpec::Auto,
-                gap: CONTROL_GAP,
-                padding: Padding::default(),
-                align: Align::Start,
-                children,
-            })),
-        })
-    }
-
-    fn preset_button(&self, preset: TensionPreset) -> Node<'static, GuiState> {
-        Node::Button(ButtonSpec {
-            key: format!("preset-{:?}", preset),
-            label: preset.label().to_string(),
-            control_size: Size {
-                width: 124,
-                height: 26,
-            },
-            size: SizeSpec::Auto,
-            on_interaction: Some(Box::new(move |state: &mut GuiState, event: ButtonEvent| {
-                if event.response.clicked {
-                    state.apply_preset(preset);
-                }
-            })),
-        })
-    }
-
-    fn quantize_indicator(&self) -> Node<'static, GuiState> {
-        Node::Widget(WidgetSpec {
-            key: "quantize-indicator".to_string(),
-            size: SizeSpec::Fixed(Size {
-                width: 220,
-                height: 18,
-            }),
-            render: Box::new(|ui, rect, state: &mut GuiState| {
-                let pull = state.param_bool(PARAM_PULL_TRIGGER_ID, false);
-                let latch = state.param_bool(PARAM_PULL_LATCH_ID, false);
-                let text = if pull || latch {
-                    "Quantize Armed"
-                } else {
-                    "Quantize Idle"
-                };
-                ui.canvas().fill_rect(rect, Color::rgb(20, 24, 31));
-                ui.text_with_color(
-                    rect.origin,
-                    text,
-                    if pull || latch { ACCENT } else { SUBTITLE },
-                );
-            }),
-        })
-    }
-
-    fn build_meter_panel(&self) -> Node<'static, GuiState> {
-        let labels = [
-            "In L", "In R", "Elastic", "Warp", "Space", "Feed", "Out L", "Out R", "Tension",
-        ];
-        let mut children = Vec::with_capacity(labels.len());
-        for (index, label) in labels.iter().enumerate() {
-            let meter_index = index;
-            let meter_label = (*label).to_string();
-            children.push(Node::Widget(WidgetSpec {
-                key: format!("meter-{meter_index}"),
-                size: SizeSpec::Fixed(Size {
-                    width: METER_CELL_W,
-                    height: METER_CELL_H,
-                }),
-                render: Box::new(move |ui, rect, state: &mut GuiState| {
-                    state.draw_meter_cell(ui, rect, meter_index, &meter_label);
-                }),
-            }));
-        }
-
-        Node::Panel(PanelSpec {
-            key: "meters-panel".to_string(),
-            title: Some("Stage Meters".to_string()),
-            padding: 10,
-            background: Some(PANEL_BG),
-            outline: Some(PANEL_BORDER),
-            header_height: None,
-            size: SizeSpec::Auto,
-            content: Box::new(Node::Row(FlexSpec {
-                size: SizeSpec::Auto,
-                gap: CONTROL_GAP,
-                padding: Padding::default(),
-                align: Align::Start,
-                children,
-            })),
-        })
-    }
-
-    fn param_value(&self, param_id: ClapId, default: f32) -> f32 {
-        self.params.get_param(param_id).unwrap_or(default)
-    }
-
-    fn param_bool(&self, param_id: ClapId, default: bool) -> bool {
-        self.param_value(param_id, if default { 1.0 } else { 0.0 }) >= 0.5
-    }
-
-    fn param_knob<K: Into<String>>(
-        &self,
-        key: K,
-        label: &str,
-        param_id: ClapId,
-        value: f32,
-        range: (f32, f32),
-        unit: &'static str,
-    ) -> Node<'static, GuiState> {
-        Node::Knob(KnobSpec {
-            key: key.into(),
-            label: label.to_string(),
-            value_label: Some(format_value(value, range, unit)),
-            value,
-            range,
-            size: SizeSpec::Auto,
-            on_interaction: Some(Box::new(move |state: &mut GuiState, event: KnobEvent| {
-                state.params.set_param(param_id, event.value);
-                state.push_value(param_id, event.value);
-            })),
-        })
-    }
-
-    fn param_toggle(
-        &self,
-        key: &str,
-        label: &str,
-        param_id: ClapId,
-        value: bool,
-    ) -> Node<'static, GuiState> {
-        Node::Toggle(ToggleSpec {
-            key: key.to_string(),
-            label: label.to_string(),
-            value,
-            control_size: Size {
-                width: TOGGLE_W,
-                height: TOGGLE_H,
-            },
-            size: SizeSpec::Auto,
-            on_interaction: Some(Box::new(move |state: &mut GuiState, event: ToggleEvent| {
-                let raw = if event.value { 1.0 } else { 0.0 };
-                state.params.set_param(param_id, raw);
-                state.push_begin(param_id);
-                state.push_value(param_id, raw);
-                state.push_end(param_id);
-            })),
-        })
-    }
-
-    fn param_dropdown<K: Into<String>>(
-        &self,
-        key: K,
-        label: &str,
-        param_id: ClapId,
-        options: Vec<String>,
-        selected: usize,
-        value_from_index: fn(usize) -> f32,
-    ) -> Node<'static, GuiState> {
-        Node::Dropdown(DropdownSpec {
-            key: key.into(),
-            label: label.to_string(),
-            options,
-            selected,
-            control_size: Size {
-                width: DROPDOWN_W,
-                height: DROPDOWN_H,
-            },
-            size: SizeSpec::Auto,
-            on_interaction: Some(Box::new(
-                move |state: &mut GuiState, event: DropdownEvent| {
-                    if event.response.changed {
-                        let value = value_from_index(event.selected);
-                        state.params.set_param(param_id, value);
-                        state.push_begin(param_id);
-                        state.push_value(param_id, value);
-                        state.push_end(param_id);
-                    }
-                },
-            )),
-        })
-    }
-
-    fn pull_button(&self) -> Node<'static, GuiState> {
-        Node::Region(RegionSpec {
-            key: "pull-button".to_string(),
-            size: Size {
-                width: BUTTON_WIDTH,
-                height: BUTTON_HEIGHT,
-            },
-            on_interaction: Some(Box::new(|state: &mut GuiState, event| {
-                if event.response.pressed {
-                    state.push_begin(PARAM_PULL_TRIGGER_ID);
-                    state.params.set_param(PARAM_PULL_TRIGGER_ID, 1.0);
-                    state.push_value(PARAM_PULL_TRIGGER_ID, 1.0);
-                }
-                if event.response.released {
-                    state.params.set_param(PARAM_PULL_TRIGGER_ID, 0.0);
-                    state.push_value(PARAM_PULL_TRIGGER_ID, 0.0);
-                    state.push_end(PARAM_PULL_TRIGGER_ID);
-                }
-            })),
-            draw: Some(Box::new(|canvas, rect, state: &mut GuiState, response| {
-                let active = response.active || state.param_bool(PARAM_PULL_TRIGGER_ID, false);
-                let fill = if active {
-                    ACCENT
-                } else if response.hovered {
-                    Color::rgb(62, 74, 94)
-                } else {
-                    Color::rgb(44, 52, 66)
-                };
-                canvas.fill_rect(rect, fill);
-                canvas.stroke_rect(rect, 1, PANEL_BORDER);
-                canvas.draw_text(
-                    Point {
-                        x: rect.origin.x + 38,
-                        y: rect.origin.y + 8,
-                    },
-                    "PULL",
-                    Color::rgb(12, 14, 20),
-                    1,
-                );
-            })),
-        })
-    }
-
-    fn draw_tension_map(&mut self, ui: &mut Ui<'_>, rect: Rect) {
-        {
-            let canvas = ui.canvas();
-            canvas.fill_rect(rect, Color::rgb(22, 27, 35));
-            canvas.stroke_rect(rect, 1, PANEL_BORDER);
-
-            let center_x = rect.origin.x + rect.size.width as i32 / 2;
-            let center_y = rect.origin.y + rect.size.height as i32 / 2;
-            canvas.draw_line(
-                Point {
-                    x: center_x,
-                    y: rect.origin.y,
-                },
-                Point {
-                    x: center_x,
-                    y: rect.origin.y + rect.size.height as i32,
-                },
-                Color::rgb(52, 62, 77),
-            );
-            canvas.draw_line(
-                Point {
-                    x: rect.origin.x,
-                    y: center_y,
-                },
-                Point {
-                    x: rect.origin.x + rect.size.width as i32,
-                    y: center_y,
-                },
-                Color::rgb(52, 62, 77),
-            );
-        }
-
-        let response = ui.region_with_key("tension-map-region", rect);
-        let pointer = ui.input().pointer_pos;
-        if response.pressed {
-            self.map_dragging = true;
-            self.push_begin(PARAM_PULL_DIRECTION_ID);
-            self.push_begin(PARAM_ELASTICITY_ID);
-            self.update_map_from_pointer(pointer, rect);
-        }
-        if response.dragged && self.map_dragging {
-            self.update_map_from_pointer(pointer, rect);
-        }
-        if response.released && self.map_dragging {
-            self.push_end(PARAM_PULL_DIRECTION_ID);
-            self.push_end(PARAM_ELASTICITY_ID);
-            self.map_dragging = false;
-        }
-        if response.double_clicked {
-            self.push_begin(PARAM_PULL_DIRECTION_ID);
-            self.push_begin(PARAM_ELASTICITY_ID);
-            self.set_param_immediate(PARAM_PULL_DIRECTION_ID, 0.5);
-            self.set_param_immediate(PARAM_ELASTICITY_ID, 0.65);
-            self.push_end(PARAM_PULL_DIRECTION_ID);
-            self.push_end(PARAM_ELASTICITY_ID);
-            self.map_dragging = false;
-        }
-
-        let px = rect.origin.x
-            + (self.param_value(PARAM_PULL_DIRECTION_ID, 0.5) * rect.size.width as f32) as i32;
-        let py = rect.origin.y
-            + ((1.0 - self.param_value(PARAM_ELASTICITY_ID, 0.65)) * rect.size.height as f32)
-                as i32;
-        let point = Point { x: px, y: py };
-
-        self.map_trace.push(point);
-        if self.map_trace.len() > 36 {
-            self.map_trace.remove(0);
-        }
-
-        {
-            let canvas = ui.canvas();
-            for pair in self.map_trace.windows(2) {
-                if let [a, b] = pair {
-                    canvas.draw_line(*a, *b, MAP_TRACE);
-                }
-            }
-
-            canvas.draw_line(
-                Point {
-                    x: px,
-                    y: rect.origin.y,
-                },
-                Point {
-                    x: px,
-                    y: rect.origin.y + rect.size.height as i32,
-                },
-                MAP_LINE,
-            );
-            canvas.draw_line(
-                Point {
-                    x: rect.origin.x,
-                    y: py,
-                },
-                Point {
-                    x: rect.origin.x + rect.size.width as i32,
-                    y: py,
-                },
-                MAP_LINE,
-            );
-
-            canvas.fill_circle(point, 8, MAP_DOT);
-            canvas.stroke_circle(point, 12, 2, ACCENT);
-
-            canvas.draw_text(
-                Point {
-                    x: rect.origin.x + 8,
-                    y: rect.origin.y - 14,
-                },
-                "BACKWARD",
-                SUBTITLE,
-                1,
-            );
-            canvas.draw_text(
-                Point {
-                    x: rect.origin.x + rect.size.width as i32 - 58,
-                    y: rect.origin.y - 14,
-                },
-                "FORWARD",
-                SUBTITLE,
-                1,
-            );
-            canvas.draw_text(
-                Point {
-                    x: rect.origin.x + 2,
-                    y: rect.origin.y + rect.size.height as i32 + 6,
-                },
-                "VISCOUS",
-                SUBTITLE,
-                1,
-            );
-            canvas.draw_text(
-                Point {
-                    x: rect.origin.x + rect.size.width as i32 - 40,
-                    y: rect.origin.y + rect.size.height as i32 + 6,
-                },
-                "SPRING",
-                SUBTITLE,
-                1,
-            );
-        }
-    }
-
-    fn draw_meter_cell(&mut self, ui: &mut Ui<'_>, rect: Rect, index: usize, label: &str) {
-        let values = [
-            self.status.input_left(),
-            self.status.input_right(),
-            self.status.elastic_activity(),
-            self.status.warp_activity(),
-            self.status.space_activity(),
-            self.status.feedback_activity(),
-            self.status.output_left(),
-            self.status.output_right(),
-            self.status.tension_activity(),
-        ];
-
-        self.meter_smooth[index] +=
-            (values[index] - self.meter_smooth[index]) * (self.frame_dt * 12.0);
-        self.meter_peak_hold[index] = if values[index] >= self.meter_peak_hold[index] {
-            values[index]
-        } else {
-            (self.meter_peak_hold[index] - self.frame_dt * 0.4).max(self.meter_smooth[index])
-        };
-
-        let value = self.meter_smooth[index].clamp(0.0, 1.0);
-        let hold = self.meter_peak_hold[index].clamp(0.0, 1.0);
-
-        let bar_rect = Rect {
-            origin: Point {
-                x: rect.origin.x,
-                y: rect.origin.y,
-            },
-            size: Size {
-                width: rect.size.width,
-                height: rect.size.height.saturating_sub(18),
-            },
-        };
-        ui.canvas().fill_rect(bar_rect, Color::rgb(32, 37, 46));
-        ui.canvas().stroke_rect(bar_rect, 1, PANEL_BORDER);
-
-        let fill_h = (bar_rect.size.height as f32 * value).round() as u32;
-        if fill_h > 0 {
-            let fill_rect = Rect {
-                origin: Point {
-                    x: bar_rect.origin.x,
-                    y: bar_rect.origin.y + bar_rect.size.height as i32 - fill_h as i32,
-                },
-                size: Size {
-                    width: bar_rect.size.width,
-                    height: fill_h,
-                },
+        let dt = (now - self.last_meter_update)
+            .as_secs_f32()
+            .clamp(1.0 / 240.0, 0.1);
+        self.last_meter_update = now;
+        for (index, raw) in self.status.snapshot().into_iter().enumerate() {
+            let raw = raw.clamp(0.0, 1.0);
+            let attack = 1.0 - (-dt * 14.0).exp();
+            let release = 1.0 - (-dt * 6.0).exp();
+            let alpha = if raw > self.meter_smooth[index] {
+                attack
+            } else {
+                release
             };
-            let color = if value > 0.85 { METER_WARN } else { METER_FILL };
-            ui.canvas().fill_rect(fill_rect, color);
+            self.meter_smooth[index] += (raw - self.meter_smooth[index]) * alpha;
+            self.meter_peak_hold[index] = self.meter_peak_hold[index]
+                .max(self.meter_smooth[index])
+                .max(raw);
+            self.meter_peak_hold[index] =
+                (self.meter_peak_hold[index] - dt * 0.45).max(self.meter_smooth[index]);
         }
-
-        let hold_y = bar_rect.origin.y + bar_rect.size.height as i32
-            - (bar_rect.size.height as f32 * hold).round() as i32;
-        ui.canvas().draw_line(
-            Point {
-                x: bar_rect.origin.x,
-                y: hold_y,
-            },
-            Point {
-                x: bar_rect.origin.x + bar_rect.size.width as i32,
-                y: hold_y,
-            },
-            METER_HOLD,
-        );
-
-        ui.text_with_color(
-            Point {
-                x: rect.origin.x,
-                y: rect.origin.y + rect.size.height as i32 - 14,
-            },
-            label,
-            SUBTITLE,
-        );
     }
 
-    fn update_map_from_pointer(&self, pointer: Point, rect: Rect) {
-        let local_x = (pointer.x - rect.origin.x) as f32;
-        let local_y = (pointer.y - rect.origin.y) as f32;
-        let x = (local_x / rect.size.width.max(1) as f32).clamp(0.0, 1.0);
-        let y = (1.0_f32 - (local_y / rect.size.height.max(1) as f32)).clamp(0.0, 1.0);
-        self.params.set_param(PARAM_PULL_DIRECTION_ID, x);
-        self.params.set_param(PARAM_ELASTICITY_ID, y);
-        self.push_value(PARAM_PULL_DIRECTION_ID, x);
-        self.push_value(PARAM_ELASTICITY_ID, y);
+    fn meter_realtime_active(&self) -> bool {
+        self.status.snapshot().iter().any(|value| *value > 0.0001)
+            || self.meter_smooth.iter().any(|value| *value > 0.0001)
+            || self.meter_peak_hold.iter().any(|value| *value > 0.0001)
     }
 
-    fn set_param_immediate(&self, param_id: ClapId, value: f32) {
-        self.params.set_param(param_id, value);
-        self.push_value(param_id, value);
+    fn parameter_value(&self, id: ClapId, range: ParamRange) -> f32 {
+        self.params
+            .get_param(id)
+            .unwrap_or(range.default)
+            .clamp(range.min, range.max)
     }
 
-    fn apply_preset(&mut self, preset: TensionPreset) {
-        for (param_id, value) in preset.updates() {
-            self.push_begin(*param_id);
-            self.params.set_param(*param_id, *value);
-            self.push_value(*param_id, *value);
-            self.push_end(*param_id);
-        }
+    fn parameter_normalized(&self, id: ClapId, range: ParamRange) -> f32 {
+        range.normalize(self.parameter_value(id, range))
     }
 
     fn request_flush(&self) {
@@ -1603,34 +429,806 @@ impl GuiState {
         }
     }
 
-    fn push_value(&self, param_id: ClapId, value: f32) {
+    fn begin(&self, id: ClapId) {
+        if let Some(sink) = self.edit_sink.as_ref() {
+            sink.gesture_started(&self.automation_config, id);
+            return;
+        }
         self.automation_queue
-            .push_value(&self.automation_config, param_id, value as f64);
+            .push_gesture_begin(&self.automation_config, id);
         self.request_flush();
     }
 
-    fn push_begin(&self, param_id: ClapId) {
+    fn value(&self, id: ClapId, value: f32) {
+        let value = self.canonical_value(id, value);
+        if let Some(sink) = self.edit_sink.as_ref() {
+            sink.gesture_value(&self.automation_config, id, value as f64);
+            return;
+        }
         self.automation_queue
-            .push_gesture_begin(&self.automation_config, param_id);
+            .push_value(&self.automation_config, id, value as f64);
         self.request_flush();
     }
 
-    fn push_end(&self, param_id: ClapId) {
+    fn canonical_value(&self, id: ClapId, value: f32) -> f32 {
+        self.params.set_param(id, value);
+        self.params.get_param(id).unwrap_or(value)
+    }
+
+    fn end(&self, id: ClapId) {
+        if let Some(sink) = self.edit_sink.as_ref() {
+            sink.gesture_ended(&self.automation_config, id);
+            return;
+        }
         self.automation_queue
-            .push_gesture_end(&self.automation_config, param_id);
+            .push_gesture_end(&self.automation_config, id);
         self.request_flush();
+    }
+
+    fn gesture(&self, id: ClapId, range: ParamRange, event: KnobMessage) {
+        match event {
+            KnobMessage::GestureStarted { value } => {
+                self.begin(id);
+                self.value(id, range.denormalize(value));
+            }
+            KnobMessage::ValueChanged { value } => self.value(id, range.denormalize(value)),
+            KnobMessage::GestureEnded { value } => {
+                self.value(id, range.denormalize(value));
+                self.end(id);
+            }
+            KnobMessage::Reset { value } => {
+                self.begin(id);
+                self.value(id, range.denormalize(value));
+                self.end(id);
+            }
+            KnobMessage::KeyboardGesture(batch) => self.apply_batch(id, range, batch.events),
+            KnobMessage::WheelGesture(batch) => self.apply_batch(id, range, batch.events),
+        }
+    }
+
+    fn apply_batch(
+        &self,
+        id: ClapId,
+        range: ParamRange,
+        events: [radiant::widgets::KnobAutomationEvent; 3],
+    ) {
+        for event in events {
+            match event {
+                radiant::widgets::KnobAutomationEvent::GestureStarted { value } => {
+                    self.begin(id);
+                    self.value(id, range.denormalize(value));
+                }
+                radiant::widgets::KnobAutomationEvent::ValueChanged { value } => {
+                    self.value(id, range.denormalize(value));
+                }
+                radiant::widgets::KnobAutomationEvent::GestureEnded { value } => {
+                    self.value(id, range.denormalize(value));
+                    self.end(id);
+                }
+            }
+        }
+    }
+
+    fn toggle_value(&self, id: ClapId, checked: bool) {
+        let value = if checked { 1.0 } else { 0.0 };
+        self.begin(id);
+        self.value(id, value);
+        self.end(id);
+    }
+
+    fn pull(&self) {
+        self.begin(PARAM_PULL_TRIGGER_ID);
+        self.value(PARAM_PULL_TRIGGER_ID, 1.0);
+        self.value(PARAM_PULL_TRIGGER_ID, 0.0);
+        self.end(PARAM_PULL_TRIGGER_ID);
+    }
+
+    fn paired_map_reset(&self) {
+        self.begin(PARAM_PULL_DIRECTION_ID);
+        self.begin(PARAM_ELASTICITY_ID);
+        self.value(PARAM_PULL_DIRECTION_ID, 0.5);
+        self.value(PARAM_ELASTICITY_ID, 0.65);
+        self.end(PARAM_PULL_DIRECTION_ID);
+        self.end(PARAM_ELASTICITY_ID);
+    }
+
+    fn paired_map_drag(&self, drag: DragHandleMessage) {
+        match drag {
+            DragHandleMessage::Started { position, .. } => {
+                self.begin(PARAM_PULL_DIRECTION_ID);
+                self.begin(PARAM_ELASTICITY_ID);
+                self.map_value(position);
+            }
+            DragHandleMessage::Moved { position } | DragHandleMessage::Ended { position } => {
+                self.map_value(position);
+                if matches!(drag, DragHandleMessage::Ended { .. }) {
+                    self.end(PARAM_PULL_DIRECTION_ID);
+                    self.end(PARAM_ELASTICITY_ID);
+                }
+            }
+            DragHandleMessage::DoubleActivate { .. } => self.paired_map_reset(),
+            DragHandleMessage::Cancelled { .. } => {
+                self.end(PARAM_PULL_DIRECTION_ID);
+                self.end(PARAM_ELASTICITY_ID);
+            }
+        }
+    }
+
+    fn map_value(&self, position: radiant::gui::types::Point) {
+        let direction = position.x.clamp(0.0, 1.0);
+        let elasticity = (1.0 - position.y).clamp(0.0, 1.0);
+        self.value(PARAM_PULL_DIRECTION_ID, direction);
+        self.value(PARAM_ELASTICITY_ID, elasticity);
+    }
+
+    fn apply_preset(&self, index: usize) {
+        for &(param_id, value) in preset_updates(index) {
+            self.begin(param_id);
+            self.value(param_id, value);
+            self.end(param_id);
+        }
     }
 }
 
-fn format_value(value: f32, range: (f32, f32), unit: &'static str) -> String {
-    match unit {
-        "%" => {
-            let span = (range.1 - range.0).max(1.0e-6);
-            let pct = ((value - range.0) / span * 100.0).clamp(0.0, 100.0);
-            format!("{pct:.0}%")
+fn preset_updates(index: usize) -> &'static [(ClapId, f32)] {
+    match index {
+        0 => &[
+            (PARAM_TENSION_ID, 0.74),
+            (PARAM_PULL_SHAPE_ID, 4.0),
+            (PARAM_PULL_DIVISION_ID, 4.0),
+            (PARAM_PULL_QUANTIZE_ID, 1.0),
+            (PARAM_TENSION_BIAS_ID, 0.75),
+            (PARAM_RELEASE_SNAP_ID, 0.62),
+            (PARAM_WARP_MOTION_ID, 0.56),
+            (PARAM_FEEDBACK_ID, 0.26),
+        ],
+        1 => &[
+            (PARAM_TENSION_ID, 0.67),
+            (PARAM_PULL_SHAPE_ID, 2.0),
+            (PARAM_PULL_DIVISION_ID, 2.0),
+            (PARAM_TENSION_BIAS_ID, 0.64),
+            (PARAM_GRAIN_CONTINUITY_ID, 0.54),
+            (PARAM_WARP_MOTION_ID, 0.58),
+            (PARAM_CLEAN_DIRTY_ID, 1.0),
+        ],
+        2 => &[
+            (PARAM_TENSION_ID, 0.78),
+            (PARAM_PULL_DIVISION_ID, 6.0),
+            (PARAM_PULL_LATCH_ID, 1.0),
+            (PARAM_TENSION_BIAS_ID, 0.82),
+            (PARAM_RELEASE_SNAP_ID, 0.74),
+            (PARAM_FEEDBACK_ID, 0.34),
+            (PARAM_DUCKING_ID, 0.32),
+        ],
+        3 => &[
+            (PARAM_TENSION_ID, 0.72),
+            (PARAM_PULL_DIVISION_ID, 5.0),
+            (PARAM_SWING_ID, 0.18),
+            (PARAM_ELASTICITY_ID, 0.82),
+            (PARAM_WARP_MOTION_ID, 0.51),
+            (PARAM_DIFFUSION_ID, 0.64),
+        ],
+        4 => &[
+            (PARAM_TENSION_ID, 0.70),
+            (PARAM_PULL_DIRECTION_ID, 0.84),
+            (PARAM_TENSION_BIAS_ID, 0.69),
+            (PARAM_PULL_QUANTIZE_ID, 2.0),
+            (PARAM_RELEASE_SNAP_ID, 0.58),
+            (PARAM_WARP_COLOR_ID, 1.0),
+        ],
+        5 => &[
+            (PARAM_TENSION_ID, 0.65),
+            (PARAM_PULL_DIVISION_ID, 3.0),
+            (PARAM_PULL_QUANTIZE_ID, 1.0),
+            (PARAM_SWING_ID, 0.22),
+            (PARAM_TENSION_BIAS_ID, 0.60),
+            (PARAM_WARP_MOTION_ID, 0.61),
+        ],
+        6 => &[
+            (PARAM_TENSION_ID, 0.52),
+            (PARAM_PULL_SHAPE_ID, 0.0),
+            (PARAM_PULL_DIVISION_ID, 4.0),
+            (PARAM_RELEASE_SNAP_ID, 0.44),
+            (PARAM_DIFFUSION_ID, 0.66),
+            (PARAM_WIDTH_ID, 0.75),
+        ],
+        7 => &[
+            (PARAM_TENSION_ID, 0.73),
+            (PARAM_CLEAN_DIRTY_ID, 2.0),
+            (PARAM_GRAIN_CONTINUITY_ID, 0.57),
+            (PARAM_WARP_MOTION_ID, 0.67),
+            (PARAM_FEEDBACK_ID, 0.22),
+            (PARAM_ENERGY_CEILING_ID, 0.52),
+        ],
+        8 => &[
+            (PARAM_TENSION_ID, 0.64),
+            (PARAM_WIDTH_ID, 0.90),
+            (PARAM_DIFFUSION_ID, 0.74),
+            (PARAM_PULL_DIVISION_ID, 2.0),
+            (PARAM_TENSION_BIAS_ID, 0.58),
+            (PARAM_FEEDBACK_ID, 0.18),
+        ],
+        9 => &[
+            (PARAM_TENSION_ID, 0.68),
+            (PARAM_PULL_LATCH_ID, 1.0),
+            (PARAM_PULL_DIVISION_ID, 5.0),
+            (PARAM_FEEDBACK_ID, 0.41),
+            (PARAM_DUCKING_ID, 0.38),
+            (PARAM_ENERGY_CEILING_ID, 0.66),
+        ],
+        _ => &[],
+    }
+}
+
+type EditorRuntime = DeclarativeSurfaceRuntime<
+    EditorState,
+    EditorMessage,
+    fn(&mut EditorState) -> Arc<UiSurface<EditorMessage>>,
+    fn(&mut EditorState, EditorMessage),
+>;
+
+/// Retained Radiant editor hosted by Toybox's macOS CLAP facade.
+pub(crate) struct TensionFieldEditor {
+    runtime: EditorRuntime,
+    theme: ThemeTokens,
+    paint_plan: SurfacePaintPlan,
+    viewport: Vector2,
+}
+
+impl TensionFieldEditor {
+    fn new(
+        params: Arc<crate::params::TensionFieldParams>,
+        automation_queue: Arc<AutomationQueue>,
+        status: Arc<GuiStatus>,
+        param_requester: Option<HostParamRequester>,
+    ) -> Self {
+        Self::new_with_edit_sink(params, automation_queue, status, param_requester, None)
+    }
+
+    pub(crate) fn new_with_edit_sink(
+        params: Arc<crate::params::TensionFieldParams>,
+        automation_queue: Arc<AutomationQueue>,
+        status: Arc<GuiStatus>,
+        param_requester: Option<HostParamRequester>,
+        edit_sink: Option<Arc<dyn HostParamEditSink>>,
+    ) -> Self {
+        let theme = ThemeTokens::default();
+        let viewport = Vector2::new(WINDOW_WIDTH as f32, WINDOW_HEIGHT as f32);
+        Self {
+            runtime: EditorRuntime::new_declarative(
+                EditorState::new_with_edit_sink(
+                    params,
+                    automation_queue,
+                    status,
+                    param_requester,
+                    edit_sink,
+                ),
+                viewport,
+                project_editor_surface,
+                reduce_editor_message,
+            ),
+            paint_plan: SurfacePaintPlan::empty(&theme),
+            theme,
+            viewport,
         }
-        "Hz" => format!("{value:.2} Hz"),
-        "dB" => format!("{value:+.1} dB"),
-        _ => format!("{value:.2}"),
+    }
+
+    fn resize(&mut self, width: u32, height: u32) {
+        self.viewport = Vector2::new(width.max(1) as f32, height.max(1) as f32);
+        self.runtime.dispatch_event(Event::resize(self.viewport));
+    }
+
+    fn dispatch_event(&mut self, event: Event) {
+        let _ = self.runtime.dispatch_event(event);
+    }
+
+    fn paint_plan(&mut self) -> &SurfacePaintPlan {
+        if self.needs_realtime_redraw() {
+            self.runtime.refresh();
+        }
+        let _ = self
+            .runtime
+            .borrowed_frame_into(&self.theme, &mut self.paint_plan);
+        &self.paint_plan
+    }
+
+    fn needs_realtime_redraw(&self) -> bool {
+        self.runtime.bridge().state().meter_realtime_active()
+    }
+
+    fn dispatch_key_press(&mut self, key: WidgetKey) -> bool {
+        self.runtime.dispatch_event(Event::key_press(key)).is_some()
+    }
+
+    fn dispatch_character(&mut self, character: char) -> bool {
+        self.runtime
+            .dispatch_event(Event::character(character))
+            .is_some()
+    }
+}
+
+impl toybox::radiant_gui::RadiantEditor for TensionFieldEditor {
+    fn resize(&mut self, width: u32, height: u32) {
+        Self::resize(self, width, height);
+    }
+
+    fn dispatch_event(&mut self, event: Event) {
+        Self::dispatch_event(self, event);
+    }
+
+    fn paint_plan(&mut self) -> &SurfacePaintPlan {
+        Self::paint_plan(self)
+    }
+
+    fn needs_realtime_redraw(&self) -> bool {
+        Self::needs_realtime_redraw(self)
+    }
+
+    fn dispatch_key_press(&mut self, key: WidgetKey) -> bool {
+        Self::dispatch_key_press(self, key)
+    }
+
+    fn dispatch_character(&mut self, character: char) -> bool {
+        Self::dispatch_character(self, character)
+    }
+
+    fn cancel_text_entry(&mut self) -> bool {
+        false
+    }
+}
+
+/// Construct the retained host wrapper used by the CLAP main thread.
+pub(crate) fn new_gui(
+    params: Arc<crate::params::TensionFieldParams>,
+    automation_queue: Arc<AutomationQueue>,
+    status: Arc<GuiStatus>,
+    param_requester: Option<HostParamRequester>,
+) -> toybox::radiant_gui::RadiantHostedGui {
+    toybox::radiant_gui::RadiantHostedGui::new(
+        "TensionFieldRadiantClapEditorView",
+        TensionFieldEditor::new(params, automation_queue, status, param_requester),
+        WINDOW_WIDTH,
+        WINDOW_HEIGHT,
+    )
+    .with_size_contract(
+        (MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT),
+        (WINDOW_WIDTH, WINDOW_HEIGHT),
+        (MAX_WINDOW_WIDTH, MAX_WINDOW_HEIGHT),
+    )
+}
+
+#[allow(clippy::arc_with_non_send_sync)]
+fn project_editor_surface(state: &mut EditorState) -> Arc<UiSurface<EditorMessage>> {
+    state.update_meters();
+    let mut tabs = Vec::with_capacity(ActiveTab::ALL.len());
+    for tab in ActiveTab::ALL {
+        tabs.push(
+            button(tab.title())
+                .selected(state.active_tab == tab)
+                .message(EditorMessage::SelectTab(tab))
+                .key(format!("tab-{}", tab.title())),
+        );
+    }
+
+    let view = column([
+        text("TENSION FIELD  ·  rhythmic strain engine")
+            .key("title")
+            .height(30.0),
+        row(tabs).height(34.0),
+        tab_surface(state),
+        text("Stage meters  ·  In L  In R  Elastic  Warp  Space  Feed  Out L  Out R  Tension")
+            .key("meters")
+            .height(28.0),
+        text("Radiant macOS editor  ·  host automation remains ordered begin → value → end")
+            .key("footer")
+            .height(24.0),
+    ])
+    .padding(16.0)
+    .fill_width()
+    .fill_height();
+
+    Arc::new(view.into_surface())
+}
+
+fn tab_surface(state: &mut EditorState) -> radiant::prelude::ViewNode<EditorMessage> {
+    let active_tab = state.active_tab;
+    let content = match active_tab {
+        ActiveTab::Perform => perform_surface(&*state),
+        ActiveTab::Rhythm => rhythm_surface(&*state),
+        ActiveTab::Tone => tone_surface(&*state),
+        ActiveTab::Safety => safety_surface(state),
+    };
+    column([text(active_tab.title()).height(28.0), content])
+        .key("active-tab")
+        .fill_width()
+        .fill_height()
+}
+
+fn perform_surface(state: &EditorState) -> radiant::prelude::ViewNode<EditorMessage> {
+    let mut presets = Vec::with_capacity(10);
+    for (index, label) in [
+        "Pulse Drive",
+        "Ratchet Pressure",
+        "Pre-Drop Coil",
+        "Elastic Surge",
+        "Forward Strain",
+        "Triplet Anxiety",
+        "Ghost Lift",
+        "Crush Squeeze",
+        "Wide Panic",
+        "Aftershock Tail",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        presets.push(button(label).message(EditorMessage::Preset(index)));
+    }
+
+    column([
+        row([
+            param_knob(state, "Tension", PARAM_TENSION_ID, UNIT),
+            param_knob(state, "Tension Bias", PARAM_TENSION_BIAS_ID, UNIT),
+            param_knob(state, "Direction", PARAM_PULL_DIRECTION_ID, UNIT),
+            param_knob(state, "Elasticity", PARAM_ELASTICITY_ID, UNIT),
+            toggle_control(state, "Pull Latch", PARAM_PULL_LATCH_ID),
+        ]),
+        row([
+            button("PULL").primary().message(EditorMessage::Pull),
+            custom_widget_mapped(TensionMapWidget::new(), |message| {
+                let TensionMapOutput::Drag(drag) = message;
+                EditorMessage::TensionMapDrag(drag)
+            })
+            .size(MAP_WIDTH, MAP_HEIGHT),
+            button("Map Reset").message(EditorMessage::TensionMapReset),
+        ]),
+        text("Tension Bank  ·  ten production presets").height(24.0),
+        row(presets),
+    ])
+    .padding(10.0)
+    .fill_width()
+}
+
+fn rhythm_surface(state: &EditorState) -> radiant::prelude::ViewNode<EditorMessage> {
+    column([
+        row([
+            param_knob(state, "Pull Rate", PARAM_PULL_RATE_ID, PULL_RATE),
+            param_knob(
+                state,
+                "Pull Shape",
+                PARAM_PULL_SHAPE_ID,
+                ParamRange::stepped(0.0, 4.0, 1.0, 1.0),
+            ),
+            param_knob(
+                state,
+                "Pull Division",
+                PARAM_PULL_DIVISION_ID,
+                ParamRange::stepped(0.0, 7.0, 4.0, 1.0),
+            ),
+            param_knob(state, "Swing", PARAM_SWING_ID, UNIT),
+            param_knob(state, "Rebound", PARAM_REBOUND_ID, UNIT),
+            param_knob(state, "Release Snap", PARAM_RELEASE_SNAP_ID, UNIT),
+        ]),
+        row([
+            toggle_control(state, "Hold", PARAM_HOLD_ID),
+            toggle_control(state, "Time Mode", PARAM_TIME_MODE_ID),
+            param_knob(
+                state,
+                "Pull Quantize",
+                PARAM_PULL_QUANTIZE_ID,
+                ParamRange::stepped(0.0, 3.0, 1.0, 1.0),
+            ),
+        ]),
+        text("Rhythm controls retain the original free-Hz, synced-division, swing, latch, and pull gestures."),
+    ])
+    .padding(10.0)
+    .fill_width()
+}
+
+fn tone_surface(state: &EditorState) -> radiant::prelude::ViewNode<EditorMessage> {
+    column([
+        row([
+            param_knob(state, "Grain", PARAM_GRAIN_CONTINUITY_ID, UNIT),
+            param_knob(state, "Pitch Coupling", PARAM_PITCH_COUPLING_ID, UNIT),
+            param_knob(state, "Width", PARAM_WIDTH_ID, UNIT),
+            param_knob(state, "Diffusion", PARAM_DIFFUSION_ID, UNIT),
+            param_knob(state, "Air Damping", PARAM_AIR_DAMPING_ID, UNIT),
+            toggle_control(state, "Air Comp", PARAM_AIR_COMP_ID),
+        ]),
+        row([
+            param_knob(state, "Warp Motion", PARAM_WARP_MOTION_ID, UNIT),
+            param_knob(
+                state,
+                "Warp Color",
+                PARAM_WARP_COLOR_ID,
+                ParamRange::stepped(0.0, 2.0, 0.0, 1.0),
+            ),
+            param_knob(
+                state,
+                "Character",
+                PARAM_CLEAN_DIRTY_ID,
+                ParamRange::stepped(0.0, 2.0, 0.0, 1.0),
+            ),
+            param_knob(state, "Feedback", PARAM_FEEDBACK_ID, FEEDBACK),
+        ]),
+        text("DSP Mod Matrix").height(26.0),
+        row([
+            toggle_control(state, "Mod Run", PARAM_MOD_RUN_ID),
+            param_knob(
+                state,
+                "A Shape",
+                PARAM_MOD_A_SHAPE_ID,
+                ParamRange::stepped(0.0, 3.0, 0.0, 1.0),
+            ),
+            param_knob(
+                state,
+                "A Mode",
+                PARAM_MOD_A_RATE_MODE_ID,
+                ParamRange::stepped(0.0, 1.0, 1.0, 1.0),
+            ),
+            param_knob(state, "A Rate", PARAM_MOD_A_RATE_HZ_ID, MOD_RATE),
+            param_knob(
+                state,
+                "A Division",
+                PARAM_MOD_A_DIVISION_ID,
+                ParamRange::stepped(0.0, 7.0, 4.0, 1.0),
+            ),
+            param_knob(state, "A Depth", PARAM_MOD_A_DEPTH_ID, UNIT),
+        ]),
+        row([
+            param_knob(
+                state,
+                "B Shape",
+                PARAM_MOD_B_SHAPE_ID,
+                ParamRange::stepped(0.0, 3.0, 0.0, 1.0),
+            ),
+            param_knob(
+                state,
+                "B Mode",
+                PARAM_MOD_B_RATE_MODE_ID,
+                ParamRange::stepped(0.0, 1.0, 1.0, 1.0),
+            ),
+            param_knob(state, "B Rate", PARAM_MOD_B_RATE_HZ_ID, MOD_RATE),
+            param_knob(
+                state,
+                "B Division",
+                PARAM_MOD_B_DIVISION_ID,
+                ParamRange::stepped(0.0, 7.0, 4.0, 1.0),
+            ),
+            param_knob(state, "B Depth", PARAM_MOD_B_DEPTH_ID, UNIT),
+        ]),
+        text("Routes A/B  ·  Tension  Direction  Grain  Width  Warp Motion  Feedback"),
+        route_row(
+            state,
+            "A",
+            [
+                PARAM_MOD_A_TO_TENSION_ID,
+                PARAM_MOD_A_TO_DIRECTION_ID,
+                PARAM_MOD_A_TO_GRAIN_ID,
+                PARAM_MOD_A_TO_WIDTH_ID,
+                PARAM_MOD_A_TO_WARP_MOTION_ID,
+                PARAM_MOD_A_TO_FEEDBACK_ID,
+            ],
+        ),
+        route_row(
+            state,
+            "B",
+            [
+                PARAM_MOD_B_TO_TENSION_ID,
+                PARAM_MOD_B_TO_DIRECTION_ID,
+                PARAM_MOD_B_TO_GRAIN_ID,
+                PARAM_MOD_B_TO_WIDTH_ID,
+                PARAM_MOD_B_TO_WARP_MOTION_ID,
+                PARAM_MOD_B_TO_FEEDBACK_ID,
+            ],
+        ),
+    ])
+    .padding(10.0)
+    .fill_width()
+}
+
+fn safety_surface(state: &mut EditorState) -> radiant::prelude::ViewNode<EditorMessage> {
+    column([
+        row([
+            param_knob(state, "Ducking", PARAM_DUCKING_ID, UNIT),
+            param_knob(state, "Energy Ceiling", PARAM_ENERGY_CEILING_ID, UNIT),
+            param_knob(state, "Output Trim", PARAM_OUTPUT_TRIM_DB_ID, OUTPUT_TRIM),
+            param_knob(state, "Air Comp", PARAM_AIR_COMP_ID, UNIT),
+        ]),
+        text("Stage meters  ·  In L  In R  Elastic  Warp  Space  Feed  Out L  Out R  Tension")
+            .height(28.0),
+        meter_row(state),
+        text("Safety ceilings are always active; lower Energy Ceiling for stricter containment."),
+    ])
+    .padding(10.0)
+    .fill_width()
+}
+
+fn route_row(
+    state: &EditorState,
+    label: &'static str,
+    ids: [ClapId; 6],
+) -> radiant::prelude::ViewNode<EditorMessage> {
+    let labels = ["Ten", "Dir", "Grn", "Wid", "Warp", "Feed"];
+    let mut children = vec![text(label).width(24.0)];
+    for (label, id) in labels.into_iter().zip(ids) {
+        children.push(param_knob(state, label, id, BIPOLAR));
+    }
+    row(children)
+}
+
+fn meter_row(state: &EditorState) -> radiant::prelude::ViewNode<EditorMessage> {
+    let labels = [
+        "In L", "In R", "Elastic", "Warp", "Space", "Feed", "Out L", "Out R", "Tension",
+    ];
+    let values = state.meter_smooth;
+    let peaks = state.meter_peak_hold;
+    let mut children = Vec::with_capacity(labels.len());
+    for ((label, value), peak) in labels.into_iter().zip(values).zip(peaks) {
+        children.push(
+            text(format!(
+                "{label}  {:.2}  ▲{:.2}",
+                value.clamp(0.0, 1.0),
+                peak.clamp(0.0, 1.0)
+            ))
+            .width(112.0),
+        );
+    }
+    row(children)
+}
+
+fn param_knob(
+    state: &EditorState,
+    label: &'static str,
+    id: ClapId,
+    range: ParamRange,
+) -> radiant::prelude::ViewNode<EditorMessage> {
+    knob(state.parameter_normalized(id, range))
+        .default_value(range.normalize(range.default))
+        .diameter(72.0)
+        .message(move |event| EditorMessage::Parameter { id, range, event })
+        .key(label)
+}
+
+fn toggle_control(
+    state: &EditorState,
+    label: &'static str,
+    id: ClapId,
+) -> radiant::prelude::ViewNode<EditorMessage> {
+    toggle(label, state.parameter_value(id, UNIT) >= 0.5)
+        .message(move |checked| EditorMessage::Toggle { id, checked })
+        .key(label)
+}
+
+fn reduce_editor_message(state: &mut EditorState, message: EditorMessage) {
+    match message {
+        EditorMessage::SelectTab(tab) => state.active_tab = tab,
+        EditorMessage::Parameter { id, range, event } => state.gesture(id, range, event),
+        EditorMessage::Toggle { id, checked } => state.toggle_value(id, checked),
+        EditorMessage::Pull => state.pull(),
+        EditorMessage::TensionMapReset => state.paired_map_reset(),
+        EditorMessage::TensionMapDrag(drag) => state.paired_map_drag(drag),
+        EditorMessage::Preset(index) => state.apply_preset(index),
+    }
+}
+
+#[cfg(all(test, feature = "screenshot-test"))]
+mod screenshot_tests {
+    use super::*;
+    use image::{ColorType, ImageFormat};
+    use radiant::theme::DpiScale;
+    use std::path::PathBuf;
+
+    #[test]
+    fn screenshot_renders_initial_ui() {
+        let params = Arc::new(crate::params::TensionFieldParams::new());
+        let status = Arc::new(GuiStatus::default());
+        let mut state =
+            EditorState::new(params, Arc::new(AutomationQueue::default()), status, None);
+        let plan = project_editor_surface(&mut state)
+            .frame_at_size(
+                Vector2::new(WINDOW_WIDTH as f32, WINDOW_HEIGHT as f32),
+                &ThemeTokens::default(),
+            )
+            .paint_plan;
+        let mut capture = toybox::radiant_gui::bundled_offscreen_capture(
+            Vector2::new(WINDOW_WIDTH as f32, WINDOW_HEIGHT as f32),
+            DpiScale::ONE,
+        )
+        .expect("Radiant offscreen capture should be available");
+        let pixels = capture.capture(&plan).expect("screenshot should render");
+        let root =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/ui-screenshots/tension_field");
+        std::fs::create_dir_all(&root).expect("screenshot directory should be writable");
+        image::save_buffer_with_format(
+            root.join("initial-ui-default.png"),
+            &pixels,
+            WINDOW_WIDTH,
+            WINDOW_HEIGHT,
+            ColorType::Rgba8,
+            ImageFormat::Png,
+        )
+        .expect("screenshot should be written");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preset_table_keeps_complete_multi_parameter_programs() {
+        assert!(preset_updates(0).len() >= 8);
+        assert!(
+            preset_updates(2)
+                .iter()
+                .any(|(id, _)| *id == PARAM_DUCKING_ID)
+        );
+        assert!(
+            preset_updates(9)
+                .iter()
+                .any(|(id, _)| *id == PARAM_ENERGY_CEILING_ID)
+        );
+    }
+
+    #[test]
+    fn map_coordinates_are_normalized_to_the_widget_bounds() {
+        let bounds = Rect::from_xy_size(42.0, 96.0, MAP_WIDTH, MAP_HEIGHT);
+        let lower_left = map_point(bounds, radiant::gui::types::Point::new(42.0, 256.0));
+        let upper_right = map_point(bounds, radiant::gui::types::Point::new(662.0, 96.0));
+        assert_eq!(lower_left, radiant::gui::types::Point::new(0.0, 1.0));
+        assert_eq!(upper_right, radiant::gui::types::Point::new(1.0, 0.0));
+    }
+
+    #[test]
+    fn map_click_places_at_pointer_and_double_click_resets() {
+        let bounds = Rect::from_xy_size(42.0, 96.0, MAP_WIDTH, MAP_HEIGHT);
+        let position = radiant::gui::types::Point::new(352.0, 176.0);
+        let local = radiant::gui::types::Point::new(0.5, 0.5);
+        let mut map = TensionMapWidget::new();
+
+        let output = Widget::handle_input(&mut map, bounds, WidgetInput::primary_press(position))
+            .expect("map press should start placement");
+        assert_eq!(
+            output.typed_copied::<TensionMapOutput>(),
+            Some(TensionMapOutput::Drag(DragHandleMessage::started(local)))
+        );
+
+        let output = Widget::handle_input(&mut map, bounds, WidgetInput::primary_release(position))
+            .expect("map release should end placement");
+        assert_eq!(
+            output.typed_copied::<TensionMapOutput>(),
+            Some(TensionMapOutput::Drag(DragHandleMessage::ended(local)))
+        );
+
+        let output = Widget::handle_input(
+            &mut map,
+            bounds,
+            WidgetInput::primary_double_click(position),
+        )
+        .expect("map double-click should reset");
+        assert_eq!(
+            output.typed_copied::<TensionMapOutput>(),
+            Some(TensionMapOutput::Drag(DragHandleMessage::double_activate(
+                local
+            )))
+        );
+    }
+
+    #[test]
+    fn stepped_parameter_values_are_canonical_before_automation() {
+        let state = EditorState::new(
+            Arc::new(crate::params::TensionFieldParams::new()),
+            Arc::new(AutomationQueue::default()),
+            Arc::new(GuiStatus::default()),
+            None,
+        );
+
+        assert_eq!(state.canonical_value(PARAM_PULL_SHAPE_ID, 2.5), 3.0);
+        assert_eq!(state.canonical_value(PARAM_PULL_QUANTIZE_ID, 1.5), 2.0);
+        assert_eq!(state.canonical_value(PARAM_PULL_RATE_ID, 0.0), 0.02);
+        assert_eq!(
+            ParamRange::stepped(0.0, 4.0, 1.0, 1.0).denormalize(0.65),
+            3.0
+        );
     }
 }
